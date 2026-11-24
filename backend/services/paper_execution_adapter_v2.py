@@ -1,8 +1,8 @@
 import hashlib
 import os
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 from services.market_data_service import MarketDataService, MarketDataUnavailable
 
@@ -33,7 +33,7 @@ class PaperExecutionAdapterV2:
 
     SUPPORTED_SYMBOLS = {"BTC-USD", "ETH-USD"}
 
-    def __init__(self, market_data: Optional[MarketDataService] = None, config: Optional[PaperExecutionConfig] = None):
+    def __init__(self, market_data: MarketDataService | None = None, config: PaperExecutionConfig | None = None):
         self.market_data = market_data or MarketDataService()
         self.config = config or self.from_env()
 
@@ -63,21 +63,21 @@ class PaperExecutionAdapterV2:
 
     @staticmethod
     def utc_now() -> str:
-        return datetime.now(timezone.utc).isoformat()
+        return datetime.now(UTC).isoformat()
 
     @staticmethod
-    def _stable_order_id(prefix: str, symbol: str, client_order_id: Optional[str]) -> str:
+    def _stable_order_id(prefix: str, symbol: str, client_order_id: str | None) -> str:
         if client_order_id:
             digest = hashlib.sha256(client_order_id.encode("utf-8")).hexdigest()[:16]
             return f"paper_{prefix}_{symbol.replace('-', '').lower()}_{digest}"
-        millis = int(datetime.now(timezone.utc).timestamp() * 1000)
+        millis = int(datetime.now(UTC).timestamp() * 1000)
         return f"paper_{prefix}_{symbol.replace('-', '').lower()}_{millis}"
 
     @staticmethod
-    def _event(status: str, message: str) -> Dict[str, Any]:
+    def _event(status: str, message: str) -> dict[str, Any]:
         return {"status": status, "message": message, "timestamp": PaperExecutionAdapterV2.utc_now()}
 
-    def _reject(self, *, prefix: str, symbol: str, client_order_id: Optional[str], reason: str, requested: Dict[str, Any]) -> Dict[str, Any]:
+    def _reject(self, *, prefix: str, symbol: str, client_order_id: str | None, reason: str, requested: dict[str, Any]) -> dict[str, Any]:
         return {
             "success": False,
             "order_id": self._stable_order_id(prefix, symbol, client_order_id),
@@ -119,7 +119,7 @@ class PaperExecutionAdapterV2:
             raise MarketDataUnavailable(f"Paper execution received invalid reference price for {symbol}")
         return price
 
-    async def place_market_buy(self, symbol: str, notional_usd: float, client_order_id: Optional[str] = None) -> Dict[str, Any]:
+    async def place_market_buy(self, symbol: str, notional_usd: float, client_order_id: str | None = None) -> dict[str, Any]:
         requested_notional = round(float(notional_usd), self.config.quote_precision)
         requested = {"symbol": symbol, "side": "BUY", "notional_usd": requested_notional}
         if not self._is_supported_symbol(symbol):
@@ -169,7 +169,7 @@ class PaperExecutionAdapterV2:
             ],
         }
 
-    async def place_market_sell(self, symbol: str, base_units: float, client_order_id: Optional[str] = None) -> Dict[str, Any]:
+    async def place_market_sell(self, symbol: str, base_units: float, client_order_id: str | None = None) -> dict[str, Any]:
         requested_units = round(float(base_units), self.config.base_precision)
         requested = {"symbol": symbol, "side": "SELL", "base_units": requested_units}
         if not self._is_supported_symbol(symbol):

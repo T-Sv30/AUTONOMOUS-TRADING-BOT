@@ -1,6 +1,7 @@
-import numpy as np
-from typing import List, Dict, Any
 import logging
+from typing import Any
+
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -8,7 +9,7 @@ class TechnicalIndicators:
     """Calculate technical indicators for trading analysis"""
     
     @staticmethod
-    def calculate_rsi(prices: List[float], period: int = 14) -> float:
+    def calculate_rsi(prices: list[float], period: int = 14) -> float:
         """Calculate Relative Strength Index (RSI)"""
         if len(prices) < period + 1:
             return 50.0  # Neutral if not enough data
@@ -33,7 +34,7 @@ class TechnicalIndicators:
             return 50.0
     
     @staticmethod
-    def calculate_macd(prices: List[float], fast: int = 12, slow: int = 26, signal: int = 9) -> Dict[str, float]:
+    def calculate_macd(prices: list[float], fast: int = 12, slow: int = 26, signal: int = 9) -> dict[str, float]:
         """Calculate MACD (Moving Average Convergence Divergence)"""
         if len(prices) < slow + signal:
             return {"macd": 0.0, "signal": 0.0, "histogram": 0.0}
@@ -77,7 +78,7 @@ class TechnicalIndicators:
             return {"macd": 0.0, "signal": 0.0, "histogram": 0.0}
     
     @staticmethod
-    def calculate_bollinger_bands(prices: List[float], period: int = 20, std_dev: float = 2.0) -> Dict[str, float]:
+    def calculate_bollinger_bands(prices: list[float], period: int = 20, std_dev: float = 2.0) -> dict[str, float]:
         """Calculate Bollinger Bands"""
         if len(prices) < period:
             current_price = prices[-1] if prices else 0
@@ -128,7 +129,7 @@ class TechnicalIndicators:
         return ema
     
     @staticmethod
-    def calculate_volume_profile(volumes: List[float], window: int = 20) -> Dict[str, float]:
+    def calculate_volume_profile(volumes: list[float], window: int = 20) -> dict[str, float]:
         """Calculate volume analysis"""
         if len(volumes) < window:
             avg_volume = np.mean(volumes) if volumes else 0
@@ -164,8 +165,8 @@ class TechnicalIndicators:
             }
     
     @staticmethod
-    def detect_market_regime(prices: List[float], rsi: float, macd: Dict[str, float], 
-                            bollinger: Dict[str, float]) -> str:
+    def detect_market_regime(prices: list[float], rsi: float, macd: dict[str, float], 
+                            bollinger: dict[str, float]) -> str:
         """Detect current market regime based on technical indicators"""
         if len(prices) < 20:
             return "uncertain"
@@ -213,9 +214,9 @@ class TechnicalIndicators:
             return "uncertain"
     
     @staticmethod
-    def generate_trading_signals(rsi: float, macd: Dict[str, float], 
-                                 bollinger: Dict[str, float], 
-                                 current_price: float, regime: str) -> Dict[str, Any]:
+    def generate_trading_signals(rsi: float, macd: dict[str, float], 
+                                 bollinger: dict[str, float], 
+                                 current_price: float, regime: str) -> dict[str, Any]:
         """Generate trading signals based on technical indicators"""
         signals = {
             "buy_strength": 0,

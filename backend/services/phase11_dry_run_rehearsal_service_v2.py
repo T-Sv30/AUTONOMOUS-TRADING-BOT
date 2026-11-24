@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -8,9 +8,9 @@ class RehearsalCheck:
     passed: bool
     severity: str
     detail: str
-    observed: Optional[Dict[str, Any]] = None
+    observed: dict[str, Any] | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         payload = {
             "name": self.name,
             "passed": self.passed,
@@ -47,7 +47,7 @@ class Phase11DryRunRehearsalServiceV2:
         return isinstance(value, dict)
 
     @classmethod
-    def plan(cls) -> Dict[str, Any]:
+    def plan(cls) -> dict[str, Any]:
         return {
             "phase": "phase_11_full_dry_run_dress_rehearsal",
             "live_order_submission": "disabled_by_design",
@@ -67,7 +67,7 @@ class Phase11DryRunRehearsalServiceV2:
         }
 
     @classmethod
-    def validate_readiness(cls, readiness: Dict[str, Any]) -> List[RehearsalCheck]:
+    def validate_readiness(cls, readiness: dict[str, Any]) -> list[RehearsalCheck]:
         return [
             RehearsalCheck(
                 name="pilot_readiness_ready",
@@ -86,7 +86,7 @@ class Phase11DryRunRehearsalServiceV2:
         ]
 
     @classmethod
-    def validate_dry_run_order(cls, dry_run_order: Dict[str, Any]) -> List[RehearsalCheck]:
+    def validate_dry_run_order(cls, dry_run_order: dict[str, Any]) -> list[RehearsalCheck]:
         order = dry_run_order.get("order") if isinstance(dry_run_order.get("order"), dict) else {}
         reconciliation = dry_run_order.get("reconciliation_requirement") if isinstance(dry_run_order.get("reconciliation_requirement"), dict) else {}
         missing_fields = sorted(field for field in cls.REQUIRED_DRY_RUN_FIELDS if field not in dry_run_order)
@@ -139,7 +139,7 @@ class Phase11DryRunRehearsalServiceV2:
         ]
 
     @classmethod
-    def validate_report_and_signoff(cls, report: Dict[str, Any], expansion_status: Dict[str, Any]) -> List[RehearsalCheck]:
+    def validate_report_and_signoff(cls, report: dict[str, Any], expansion_status: dict[str, Any]) -> list[RehearsalCheck]:
         return [
             RehearsalCheck(
                 name="pilot_report_generated",
@@ -161,11 +161,11 @@ class Phase11DryRunRehearsalServiceV2:
     def validate_artifacts(
         cls,
         *,
-        readiness: Dict[str, Any],
-        dry_run_order: Dict[str, Any],
-        report: Dict[str, Any],
-        expansion_status: Dict[str, Any],
-    ) -> Dict[str, Any]:
+        readiness: dict[str, Any],
+        dry_run_order: dict[str, Any],
+        report: dict[str, Any],
+        expansion_status: dict[str, Any],
+    ) -> dict[str, Any]:
         checks = []
         checks.extend(cls.validate_readiness(readiness or {}))
         checks.extend(cls.validate_dry_run_order(dry_run_order or {}))

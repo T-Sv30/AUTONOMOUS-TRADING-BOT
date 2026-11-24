@@ -1,6 +1,8 @@
-import numpy as np
-from typing import Dict, List, Any
 import logging
+from typing import Any
+
+import numpy as np
+
 from services.technical_indicators import TechnicalIndicators
 
 logger = logging.getLogger(__name__)
@@ -11,7 +13,7 @@ class MultiTimeframeAnalysis:
     def __init__(self):
         self.tech = TechnicalIndicators()
     
-    def analyze_timeframes(self, prices: List[float]) -> Dict[str, Any]:
+    def analyze_timeframes(self, prices: list[float]) -> dict[str, Any]:
         """Analyze multiple timeframes from price data"""
         if len(prices) < 50:
             return self._default_analysis()
@@ -40,7 +42,7 @@ class MultiTimeframeAnalysis:
             logger.error(f"Error in multi-timeframe analysis: {e}")
             return self._default_analysis()
     
-    def _analyze_timeframe(self, prices: List[float], timeframe: str) -> Dict[str, Any]:
+    def _analyze_timeframe(self, prices: list[float], timeframe: str) -> dict[str, Any]:
         """Analyze a single timeframe"""
         if len(prices) < 10:
             return {
@@ -80,7 +82,7 @@ class MultiTimeframeAnalysis:
             'valid': True
         }
     
-    def _calculate_alignment(self, analysis: Dict[str, Any]) -> str:
+    def _calculate_alignment(self, analysis: dict[str, Any]) -> str:
         """Calculate how well timeframes are aligned"""
         trends = []
         for tf in ['5m', '15m', '1h', '4h']:
@@ -104,7 +106,7 @@ class MultiTimeframeAnalysis:
         else:
             return 'mixed'
     
-    def _calculate_trend_strength(self, analysis: Dict[str, Any]) -> float:
+    def _calculate_trend_strength(self, analysis: dict[str, Any]) -> float:
         """Calculate overall trend strength across timeframes"""
         strengths = []
         for tf in ['5m', '15m', '1h', '4h']:
@@ -119,11 +121,11 @@ class MultiTimeframeAnalysis:
         
         # Weight longer timeframes more heavily
         weights = [1, 1.5, 2, 3][:len(strengths)]
-        weighted_strength = sum(s * w for s, w in zip(strengths, weights)) / sum(weights)
+        weighted_strength = sum(s * w for s, w in zip(strengths, weights, strict=False)) / sum(weights)
         
         return round(weighted_strength, 2)
     
-    def _default_analysis(self) -> Dict[str, Any]:
+    def _default_analysis(self) -> dict[str, Any]:
         """Return default analysis when not enough data"""
         default_tf = {'trend': 'neutral', 'strength': 0, 'rsi': 50, 'valid': False}
         return {
@@ -135,8 +137,8 @@ class MultiTimeframeAnalysis:
             'strength': 0.0
         }
     
-    def get_trading_recommendation(self, mtf_analysis: Dict[str, Any], 
-                                    current_position: bool = False) -> Dict[str, Any]:
+    def get_trading_recommendation(self, mtf_analysis: dict[str, Any], 
+                                    current_position: bool = False) -> dict[str, Any]:
         """Get trading recommendation based on multi-timeframe analysis"""
         alignment = mtf_analysis['alignment']
         strength = mtf_analysis['strength']

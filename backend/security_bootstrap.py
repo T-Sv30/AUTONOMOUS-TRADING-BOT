@@ -8,18 +8,17 @@ rewrite.
 from __future__ import annotations
 
 import sys
-from datetime import datetime, timezone, timedelta
-from typing import Callable
+from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 
 import jwt
-from jwt import ExpiredSignatureError, InvalidTokenError
 from fastapi import Request
 from fastapi.responses import JSONResponse
+from jwt import ExpiredSignatureError, InvalidTokenError
 from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
 
 from runtime_config import CORS_ORIGINS, JWT_SECRET
-
 
 AUTH_REQUIRED_PREFIXES = (
     "/api/market-analysis",
@@ -36,7 +35,7 @@ def _server_module():
 
 def _create_access_token(data: dict):
     to_encode = data.copy()
-    expire = datetime.now(timezone.utc) + timedelta(days=7)
+    expire = datetime.now(UTC) + timedelta(days=7)
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, JWT_SECRET, algorithm="HS256")
 

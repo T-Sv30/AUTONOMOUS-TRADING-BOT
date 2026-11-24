@@ -1,5 +1,5 @@
-from datetime import datetime, timezone, timedelta
-from typing import Any, Dict
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
@@ -12,20 +12,20 @@ class ExecutionControlV2:
 
     @staticmethod
     def utc_now() -> datetime:
-        return datetime.now(timezone.utc)
+        return datetime.now(UTC)
 
     @staticmethod
     def utc_now_iso() -> str:
-        return datetime.now(timezone.utc).isoformat()
+        return datetime.now(UTC).isoformat()
 
     @staticmethod
-    def build_idempotency_key(user_id: str, symbol: str, side: str, signal_snapshot: Dict[str, Any] | None = None) -> str:
+    def build_idempotency_key(user_id: str, symbol: str, side: str, signal_snapshot: dict[str, Any] | None = None) -> str:
         signal_snapshot = signal_snapshot or {}
         strategy = signal_snapshot.get("selected", {}).get("strategy") or signal_snapshot.get("strategy", "unknown")
         action = signal_snapshot.get("action", side)
         return f"{user_id}:{symbol}:{side}:{action}:{strategy}"
 
-    async def acquire_lock(self, user_id: str, symbol: str, side: str) -> Dict[str, Any]:
+    async def acquire_lock(self, user_id: str, symbol: str, side: str) -> dict[str, Any]:
         key = f"{user_id}:{symbol}:{side}"
         now = self.utc_now()
         now_iso = now.isoformat()

@@ -1,9 +1,10 @@
-import os
 import logging
-from typing import Dict, Any
-from datetime import datetime, timezone
+import os
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
+
 sys.path.append(str(Path(__file__).parent.parent))
 try:
     from emergentintegrations.llm.chat import LlmChat, UserMessage
@@ -28,7 +29,7 @@ class AIAnalysisService:
         if not self.api_key:
             raise ValueError("EMERGENT_LLM_KEY not found in environment")
     
-    async def analyze_market(self, symbol: str, price_data: Dict[str, Any], market_indicators: Dict[str, Any]) -> Dict[str, Any]:
+    async def analyze_market(self, symbol: str, price_data: dict[str, Any], market_indicators: dict[str, Any]) -> dict[str, Any]:
         """Use GPT-5 to analyze market conditions and generate trading signals"""
         try:
             # Initialize GPT-5 chat
@@ -73,7 +74,7 @@ Respond in this JSON format:
             import json
             try:
                 analysis = json.loads(response)
-            except:
+            except (json.JSONDecodeError, TypeError):
                 # Fallback if response isn't valid JSON
                 analysis = {
                     "regime": "trend",
@@ -91,7 +92,7 @@ Respond in this JSON format:
                 "ai_analysis": analysis.get('reasoning', ''),
                 "risks": analysis.get('risks', ''),
                 "buy_recommendation": analysis.get('recommendation') == 'BUY',
-                "timestamp": datetime.now(timezone.utc).isoformat()
+                "timestamp": datetime.now(UTC).isoformat()
             }
             
         except Exception as e:
@@ -105,5 +106,5 @@ Respond in this JSON format:
                 "ai_analysis": f"Analysis temporarily unavailable: {str(e)}",
                 "risks": "System error",
                 "buy_recommendation": False,
-                "timestamp": datetime.now(timezone.utc).isoformat()
+                "timestamp": datetime.now(UTC).isoformat()
             }

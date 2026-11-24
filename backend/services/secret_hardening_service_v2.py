@@ -1,10 +1,10 @@
 import os
 import re
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Mapping, Optional
+from typing import Any
 
 from services.settings_v2 import SettingsV2, TradingMode
-
 
 SENSITIVE_NAME_PATTERNS = (
     "SECRET",
@@ -36,9 +36,9 @@ class HardeningCheck:
     passed: bool
     severity: str
     detail: str
-    observed: Optional[Dict[str, Any]] = None
+    observed: dict[str, Any] | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         payload = {
             "name": self.name,
             "passed": self.passed,
@@ -84,8 +84,8 @@ class SecretHardeningServiceV2:
         return f"{text[:2]}***{text[-2:]}"
 
     @classmethod
-    def redact_mapping(cls, values: Mapping[str, Any]) -> Dict[str, Any]:
-        redacted: Dict[str, Any] = {}
+    def redact_mapping(cls, values: Mapping[str, Any]) -> dict[str, Any]:
+        redacted: dict[str, Any] = {}
         for key, value in values.items():
             if cls.is_sensitive_name(key):
                 redacted[key] = {
@@ -109,12 +109,12 @@ class SecretHardeningServiceV2:
         return redacted
 
     @staticmethod
-    def env_present(name: str, env: Optional[Mapping[str, str]] = None) -> bool:
+    def env_present(name: str, env: Mapping[str, str] | None = None) -> bool:
         source = os.environ if env is None else env
         return bool(source.get(name))
 
     @classmethod
-    def credential_report(cls, settings: SettingsV2) -> Dict[str, Any]:
+    def credential_report(cls, settings: SettingsV2) -> dict[str, Any]:
         return {
             "coinbase_exchange_url": settings.coinbase_exchange_url,
             "api_key": {
@@ -135,10 +135,10 @@ class SecretHardeningServiceV2:
         }
 
     @classmethod
-    def evaluate(cls, settings: Optional[SettingsV2] = None, env: Optional[Mapping[str, str]] = None) -> Dict[str, Any]:
+    def evaluate(cls, settings: SettingsV2 | None = None, env: Mapping[str, str] | None = None) -> dict[str, Any]:
         settings = settings or SettingsV2.from_env()
         source = os.environ if env is None else env
-        checks: List[HardeningCheck] = []
+        checks: list[HardeningCheck] = []
 
         coinbase_fields = {
             "COINBASE_EXCHANGE_API_KEY": settings.coinbase_exchange_api_key,

@@ -1,4 +1,4 @@
-from typing import Any, Dict, List
+from typing import Any
 
 from services.allocator_v2 import AllocatorV2
 from services.execution_optimizer_v2 import ExecutionOptimizerV2
@@ -16,10 +16,10 @@ class SignalPlannerV2:
     def build_plan(
         self,
         symbol: str,
-        prices: List[float],
+        prices: list[float],
         has_position: bool,
         base_notional: float = 100.0,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         if len(prices) < 30:
             return {"symbol": symbol, "action": "HOLD", "reason": "insufficient price history"}
 

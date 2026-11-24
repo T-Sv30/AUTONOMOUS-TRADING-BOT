@@ -1,6 +1,6 @@
-from datetime import datetime, timedelta, timezone
-from typing import Any, Dict
 import uuid
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import jwt
 from fastapi import Depends, HTTPException
@@ -11,7 +11,6 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field
 from app_state import db, logger, pwd_context, security
 from runtime_config import JWT_SECRET
 
-
 AUTH_FAILURE_WINDOW_MINUTES = 15
 AUTH_FAILURE_LIMIT = 8
 
@@ -21,7 +20,7 @@ class User(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     email: EmailStr
     password_hash: str
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 class UserCreate(BaseModel):
@@ -36,8 +35,8 @@ class UserLogin(BaseModel):
 
 class TokenResponse(BaseModel):
     access_token: str
-    token_type: str = "bearer"
-    user: Dict[str, Any]
+    token_type: str = "bearer"  # noqa: S105 - OAuth token type label, not a secret
+    user: dict[str, Any]
 
 
 def normalize_email(email: str) -> str:
@@ -46,7 +45,7 @@ def normalize_email(email: str) -> str:
 
 def create_access_token(data: dict) -> str:
     to_encode = data.copy()
-    to_encode.update({"exp": datetime.now(timezone.utc) + timedelta(days=7)})
+    to_encode.update({"exp": datetime.now(UTC) + timedelta(days=7)})
     return jwt.encode(to_encode, JWT_SECRET, algorithm="HS256")
 
 
@@ -62,12 +61,12 @@ def verify_token(token: str):
 
 
 async def recent_auth_failures(email: str) -> int:
-    cutoff = (datetime.now(timezone.utc) - timedelta(minutes=AUTH_FAILURE_WINDOW_MINUTES)).isoformat()
+    cutoff = (datetime.now(UTC) - timedelta(minutes=AUTH_FAILURE_WINDOW_MINUTES)).isoformat()
     return await db.auth_failures.count_documents({"email": email, "created_at": {"$gte": cutoff}})
 
 
 async def record_auth_failure(email: str) -> None:
-    await db.auth_failures.insert_one({"email": email, "created_at": datetime.now(timezone.utc).isoformat()})
+    await db.auth_failures.insert_one({"email": email, "created_at": datetime.now(UTC).isoformat()})
 
 
 async def clear_auth_failures(email: str) -> None:
@@ -112,7 +111,7 @@ async def signup(user_data: UserCreate):
         "max_daily_loss": 0.015,
         "risk_target_vol": 0.10,
         "symbols": ["BTC-USD", "ETH-USD"],
-        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(UTC).isoformat(),
     }
     await db.bot_configs.insert_one(config)
     await clear_auth_failures(email)

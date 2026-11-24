@@ -1,6 +1,8 @@
-from datetime import datetime, timezone
-from typing import Dict, Any, List
+import logging
+from datetime import UTC, datetime
+from typing import Any
 
+logger = logging.getLogger(__name__)
 
 class RiskGuardV2:
     def __init__(
@@ -22,7 +24,7 @@ class RiskGuardV2:
         self.cooldown_seconds = cooldown_seconds
 
     @classmethod
-    def from_config(cls, config: Dict[str, Any] | None):
+    def from_config(cls, config: dict[str, Any] | None):
         config = config or {}
         return cls(
             max_position_notional=float(config.get("max_position_notional", config.get("max_trade_notional", 100.0))),
@@ -36,9 +38,9 @@ class RiskGuardV2:
 
     @staticmethod
     def utc_now() -> datetime:
-        return datetime.now(timezone.utc)
+        return datetime.now(UTC)
 
-    def portfolio_metrics(self, state: Dict[str, Any], positions: List[Dict[str, Any]], price_map: Dict[str, float]) -> Dict[str, float]:
+    def portfolio_metrics(self, state: dict[str, Any], positions: list[dict[str, Any]], price_map: dict[str, float]) -> dict[str, float]:
         cash = float((state or {}).get("cash_balance", 10000.0))
         equity_high = float((state or {}).get("equity_high", max(cash, 10000.0)))
         daily_start_equity = float((state or {}).get("daily_start_equity", max(cash, 10000.0)))
@@ -68,7 +70,7 @@ class RiskGuardV2:
             "exposure_pct": round(exposure_pct, 8),
         }
 
-    def should_kill_switch(self, metrics: Dict[str, float]) -> Dict[str, Any]:
+    def should_kill_switch(self, metrics: dict[str, float]) -> dict[str, Any]:
         if metrics["total_equity"] <= metrics.get("capital_floor_value", 0.0):
             return {"triggered": True, "reason": "capital floor breached"}
         if metrics["daily_loss_pct"] >= self.max_daily_loss_pct:
@@ -79,11 +81,11 @@ class RiskGuardV2:
 
     def can_open_position(
         self,
-        metrics: Dict[str, float],
-        positions: List[Dict[str, Any]],
+        metrics: dict[str, float],
+        positions: list[dict[str, Any]],
         proposed_notional: float,
         last_trade_at_iso: str | None = None,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         kill = self.should_kill_switch(metrics)
         if kill["triggered"]:
             return {"allowed": False, "reason": kill["reason"]}
@@ -105,7 +107,7 @@ class RiskGuardV2:
                 last_trade_at = datetime.fromisoformat(last_trade_at_iso.replace("Z", "+00:00"))
                 if (self.utc_now() - last_trade_at).total_seconds() < self.cooldown_seconds:
                     return {"allowed": False, "reason": "trade cooldown active"}
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("Ignoring unparseable last_trade_at %r for cooldown check: %s", last_trade_at_iso, exc)
 
         return {"allowed": True, "reason": "ok"}

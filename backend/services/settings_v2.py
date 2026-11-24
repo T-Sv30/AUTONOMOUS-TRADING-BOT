@@ -1,7 +1,7 @@
 import logging
 import os
 from enum import Enum
-from typing import Any, Dict, List, Set
+from typing import Any
 from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -39,12 +39,12 @@ class SettingsV2(BaseModel):
     api_embed_bot_manager: bool = False
 
     jwt_secret: str = ""
-    cors_origins: List[str] = Field(default_factory=lambda: ["http://localhost:3000"])
+    cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:3000"])
     mongo_url: str = "mongodb://localhost:27017"
     db_name: str = "trading_bot"
 
     ops_admin_enabled: bool = False
-    ops_admin_emails: Set[str] = Field(default_factory=set)
+    ops_admin_emails: set[str] = Field(default_factory=set)
 
     coinbase_exchange_url: str = "https://api.exchange.coinbase.com"
     coinbase_exchange_api_key: str = ""
@@ -53,7 +53,7 @@ class SettingsV2(BaseModel):
 
     live_trading_enabled: bool = False
     live_execution_adapter: str = "disabled"
-    live_allowed_symbols: List[str] = Field(default_factory=lambda: ["BTC-USD", "ETH-USD"])
+    live_allowed_symbols: list[str] = Field(default_factory=lambda: ["BTC-USD", "ETH-USD"])
     live_max_order_notional_usd: float = 25.0
     live_manual_approval_required: bool = True
     live_approval_token: str = ""
@@ -67,7 +67,7 @@ class SettingsV2(BaseModel):
         return value.strip().lower() in {"1", "true", "yes", "on"}
 
     @staticmethod
-    def parse_csv(value: str) -> List[str]:
+    def parse_csv(value: str) -> list[str]:
         return [item.strip() for item in str(value or "").split(",") if item.strip()]
 
     @classmethod
@@ -103,7 +103,7 @@ class SettingsV2(BaseModel):
 
     @field_validator("cors_origins")
     @classmethod
-    def validate_cors_origins(cls, origins: List[str], info):
+    def validate_cors_origins(cls, origins: list[str], info):
         debug = bool(info.data.get("debug", False))
         if not origins:
             raise ValueError("CORS_ORIGINS must include at least one explicit origin")
@@ -148,14 +148,14 @@ class SettingsV2(BaseModel):
         return self
 
     @staticmethod
-    def secret_report(value: str) -> Dict[str, Any]:
+    def secret_report(value: str) -> dict[str, Any]:
         return {
             "configured": bool(value),
             "length": len(value or ""),
             "redacted": "***" if value else "",
         }
 
-    def redacted_report(self) -> Dict[str, Any]:
+    def redacted_report(self) -> dict[str, Any]:
         return {
             "debug": self.debug,
             "simulation_mode": self.simulation_mode,
@@ -186,5 +186,5 @@ class SettingsV2(BaseModel):
 
 
 SETTINGS = SettingsV2.from_env()
-if SETTINGS.debug and SETTINGS.jwt_secret == "local-debug-placeholder":
+if SETTINGS.debug and SETTINGS.jwt_secret == "local-debug-placeholder":  # noqa: S105 - detects the placeholder, not a secret  # nosec B105
     logger.warning("Using local DEBUG JWT placeholder. Set JWT_SECRET before deployment.")

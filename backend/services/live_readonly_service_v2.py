@@ -1,8 +1,8 @@
 import hashlib
 import json
 import os
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 from services.alert_service import AlertService
 from services.coinbase_readonly_adapter_v2 import CoinbaseReadonlyAdapterV2, CoinbaseReadonlyError
@@ -13,7 +13,7 @@ from services.portfolio_service_v2 import PortfolioServiceV2
 class LiveReadonlyServiceV2:
     """Live-readonly orchestration service with persisted freshness metadata."""
 
-    def __init__(self, db, adapter: Optional[CoinbaseReadonlyAdapterV2] = None):
+    def __init__(self, db, adapter: CoinbaseReadonlyAdapterV2 | None = None):
         self.db = db
         self.adapter = adapter or CoinbaseReadonlyAdapterV2()
         self.alerts = AlertService(db)
@@ -22,17 +22,17 @@ class LiveReadonlyServiceV2:
 
     @staticmethod
     def utc_now() -> str:
-        return datetime.now(timezone.utc).isoformat()
+        return datetime.now(UTC).isoformat()
 
     @staticmethod
-    def parse_timestamp(value: Any) -> Optional[datetime]:
+    def parse_timestamp(value: Any) -> datetime | None:
         if not value:
             return None
         try:
             parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
             if parsed.tzinfo is None:
-                parsed = parsed.replace(tzinfo=timezone.utc)
-            return parsed.astimezone(timezone.utc)
+                parsed = parsed.replace(tzinfo=UTC)
+            return parsed.astimezone(UTC)
         except (TypeError, ValueError):
             return None
 
@@ -44,11 +44,11 @@ class LiveReadonlyServiceV2:
             return 300
 
     @staticmethod
-    def canonical_hash(payload: Dict[str, Any]) -> str:
+    def canonical_hash(payload: dict[str, Any]) -> str:
         return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")).hexdigest()
 
     @staticmethod
-    def _symbol_from_currency(currency: str) -> Optional[str]:
+    def _symbol_from_currency(currency: str) -> str | None:
         if currency in {"BTC", "ETH"}:
             return f"{currency}-USD"
         return None
@@ -57,7 +57,7 @@ class LiveReadonlyServiceV2:
     def _base_currency(symbol: str) -> str:
         return symbol.split("-")[0]
 
-    async def persist_snapshot(self, user_id: str, snapshot: Dict[str, Any]) -> Dict[str, Any]:
+    async def persist_snapshot(self, user_id: str, snapshot: dict[str, Any]) -> dict[str, Any]:
         record = {
             "user_id": user_id,
             "mode": "live-readonly",
@@ -74,14 +74,14 @@ class LiveReadonlyServiceV2:
         await self.db.live_readonly_snapshots.insert_one(record)
         return record
 
-    async def latest_snapshot_status(self, user_id: str) -> Dict[str, Any]:
+    async def latest_snapshot_status(self, user_id: str) -> dict[str, Any]:
         latest = await self.db.live_readonly_snapshots.find_one({"user_id": user_id}, {"_id": 0}, sort=[("created_at", -1)])
         if not latest:
             return {"status": "missing", "fresh": False, "reason": "no live-readonly snapshot found", "max_age_seconds": self.max_snapshot_age_seconds()}
         timestamp = self.parse_timestamp(latest.get("snapshot_timestamp") or latest.get("created_at"))
         if not timestamp:
             return {"status": "invalid", "fresh": False, "reason": "latest live-readonly snapshot timestamp is invalid", "snapshot": latest}
-        age = (datetime.now(timezone.utc) - timestamp).total_seconds()
+        age = (datetime.now(UTC) - timestamp).total_seconds()
         max_age = self.max_snapshot_age_seconds()
         return {
             "status": "fresh" if age <= max_age else "stale",
@@ -96,7 +96,7 @@ class LiveReadonlyServiceV2:
             "credential_alias": latest.get("credential_alias"),
         }
 
-    async def snapshot(self, user_id: str, symbols: Optional[List[str]] = None) -> Dict[str, Any]:
+    async def snapshot(self, user_id: str, symbols: list[str] | None = None) -> dict[str, Any]:
         try:
             raw = await self.adapter.snapshot(symbols=symbols)
         except CoinbaseReadonlyError as exc:
@@ -111,12 +111,12 @@ class LiveReadonlyServiceV2:
         raw["persisted_at"] = persisted["created_at"]
         return raw
 
-    async def compare_exchange_to_internal(self, user_id: str, symbols: Optional[List[str]] = None, tolerance_units: float = 1e-8) -> Dict[str, Any]:
+    async def compare_exchange_to_internal(self, user_id: str, symbols: list[str] | None = None, tolerance_units: float = 1e-8) -> dict[str, Any]:
         snapshot = await self.snapshot(user_id, symbols=symbols)
         exchange_accounts = snapshot.get("accounts", [])
         internal_positions = snapshot.get("internal_positions", [])
 
-        exchange_units_by_symbol: Dict[str, float] = {}
+        exchange_units_by_symbol: dict[str, float] = {}
         for account in exchange_accounts:
             symbol = self._symbol_from_currency(str(account.get("currency", "")))
             if symbol:
@@ -148,7 +148,7 @@ class LiveReadonlyServiceV2:
             await self.alerts.emit(user_id, "live_readonly_drift_detected", "warning", "Exchange readonly balances differ from internal positions", {"issues": issues, "snapshot_hash": snapshot.get("snapshot_hash")})
         return report
 
-    async def recent_orders(self, user_id: str, status: str = "all", limit: int = 100) -> Dict[str, Any]:
+    async def recent_orders(self, user_id: str, status: str = "all", limit: int = 100) -> dict[str, Any]:
         try:
             orders = await self.adapter.get_orders(status=status, limit=limit)
         except CoinbaseReadonlyError as exc:
@@ -156,7 +156,7 @@ class LiveReadonlyServiceV2:
             raise
         return {"user_id": user_id, "mode": "live-readonly", "orders_allowed": False, "orders": orders, "checked_at": self.utc_now()}
 
-    async def recent_fills(self, user_id: str, product_id: Optional[str] = None, limit: int = 100) -> Dict[str, Any]:
+    async def recent_fills(self, user_id: str, product_id: str | None = None, limit: int = 100) -> dict[str, Any]:
         try:
             fills = await self.adapter.get_fills(product_id=product_id, limit=limit)
         except CoinbaseReadonlyError as exc:

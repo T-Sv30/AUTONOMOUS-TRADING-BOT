@@ -6,7 +6,7 @@ from services.execution_service_v2 import ExecutionServiceV2
 from services.live_order_audit_service_v2 import LiveOrderAuditServiceV2
 from services.live_trading_gate_v2 import LiveTradingGateConfig, LiveTradingGateV2
 from services.live_trading_service_v2 import LiveTradingServiceV2
-from services.trading_mode_v2 import TradingModeService, TradingModeError
+from services.trading_mode_v2 import TradingModeError, TradingModeService
 from services.trading_service_v2 import TradingServiceV2
 
 

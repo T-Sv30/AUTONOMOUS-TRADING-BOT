@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -6,7 +6,7 @@ from services.backtesting_service_v2 import BacktestConfig, BacktestingServiceV2
 
 
 def make_candles(count=120, start_price=100.0, drift=0.01):
-    start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    start = datetime(2026, 1, 1, tzinfo=UTC)
     candles = []
     price = start_price
     for i in range(count):

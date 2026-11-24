@@ -1,6 +1,6 @@
-from datetime import datetime, timezone
-from typing import Dict, Any, Optional
 import uuid
+from datetime import UTC, datetime
+from typing import Any
 
 from services.trading_service_v2 import TradingServiceV2
 
@@ -11,7 +11,7 @@ class ExecutionServiceV2:
 
     @staticmethod
     def utc_now() -> str:
-        return datetime.now(timezone.utc).isoformat()
+        return datetime.now(UTC).isoformat()
 
     @staticmethod
     def build_client_order_id(prefix: str, symbol: str, idempotency_key: str | None = None) -> str:
@@ -24,9 +24,9 @@ class ExecutionServiceV2:
         self,
         symbol: str,
         notional_usd: float,
-        signal_snapshot: Optional[Dict[str, Any]] = None,
+        signal_snapshot: dict[str, Any] | None = None,
         idempotency_key: str | None = None,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         client_order_id = self.build_client_order_id("buy", symbol, idempotency_key)
         result = await self.trading_service.place_market_buy(
             symbol=symbol,
@@ -46,7 +46,7 @@ class ExecutionServiceV2:
         base_units: float,
         reason: str = "",
         idempotency_key: str | None = None,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         client_order_id = self.build_client_order_id("sell", symbol, idempotency_key)
         result = await self.trading_service.place_market_sell(
             symbol=symbol,

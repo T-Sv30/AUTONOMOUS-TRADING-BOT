@@ -1,5 +1,4 @@
 import json
-from typing import Optional
 
 from fastapi import Request
 from fastapi.responses import JSONResponse
@@ -17,7 +16,7 @@ from services.request_context_v2 import get_request_id
 class ScopeEnforcementMiddlewareV2(BaseHTTPMiddleware):
     """Central authorization and safety choke point for live and privileged ops routes."""
 
-    def required_scope_for(self, method: str, path: str, body: Optional[dict]) -> Optional[str]:
+    def required_scope_for(self, method: str, path: str, body: dict | None) -> str | None:
         if path.startswith("/api/live-readonly/"):
             return Scope.TRADING_LIVE_PREVIEW.value
 
@@ -44,11 +43,11 @@ class ScopeEnforcementMiddlewareV2(BaseHTTPMiddleware):
         return None
 
     @staticmethod
-    def is_non_dry_run_live_order(method: str, path: str, body: Optional[dict]) -> bool:
+    def is_non_dry_run_live_order(method: str, path: str, body: dict | None) -> bool:
         return method == "POST" and path in {"/api/live-trading/market-buy", "/api/live-trading/market-sell"} and bool(body and body.get("dry_run") is False)
 
     @staticmethod
-    async def parse_json_body(request: Request) -> tuple[Optional[dict], bytes]:
+    async def parse_json_body(request: Request) -> tuple[dict | None, bytes]:
         body_bytes = await request.body()
         if not body_bytes:
             return None, body_bytes
@@ -74,7 +73,7 @@ class ScopeEnforcementMiddlewareV2(BaseHTTPMiddleware):
             headers={"X-Request-ID": request_id} if request_id else {},
         )
 
-    async def load_user(self, request: Request) -> Optional[dict]:
+    async def load_user(self, request: Request) -> dict | None:
         authorization = request.headers.get("Authorization", "")
         scheme, _, token = authorization.partition(" ")
         if scheme.lower() != "bearer" or not token:
@@ -92,7 +91,7 @@ class ScopeEnforcementMiddlewareV2(BaseHTTPMiddleware):
         user["effective_scopes"] = sorted(effective_scopes(user))
         return user
 
-    async def verify_live_approval(self, user: dict, path: str, body: dict) -> Optional[JSONResponse]:
+    async def verify_live_approval(self, user: dict, path: str, body: dict) -> JSONResponse | None:
         try:
             if path == "/api/live-trading/market-buy":
                 await LiveApprovalChallengeServiceV2(db).verify_and_consume(
@@ -115,7 +114,7 @@ class ScopeEnforcementMiddlewareV2(BaseHTTPMiddleware):
             return self.auth_error(403, "FORBIDDEN", str(exc))
         return None
 
-    async def verify_live_pre_submit_safety(self, user: dict) -> Optional[JSONResponse]:
+    async def verify_live_pre_submit_safety(self, user: dict) -> JSONResponse | None:
         result = await LivePreSubmitSafetyServiceV2(db).safe_check(user["id"])
         if not result.get("allowed"):
             return self.auth_error(409, "CONFLICT", str(result.get("reason", "live pre-submit safety check failed")))

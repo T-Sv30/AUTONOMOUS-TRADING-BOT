@@ -1,4 +1,4 @@
-from typing import Any, Dict
+from typing import Any
 
 
 class LiveSubmitPolicyError(RuntimeError):
@@ -14,7 +14,7 @@ class LiveSubmitPolicyV2:
     """
 
     @staticmethod
-    def assert_no_blind_retry(*, previous_attempt: Dict[str, Any] | None, client_order_id: str) -> None:
+    def assert_no_blind_retry(*, previous_attempt: dict[str, Any] | None, client_order_id: str) -> None:
         if not previous_attempt:
             return
         status = previous_attempt.get("status")
@@ -24,7 +24,7 @@ class LiveSubmitPolicyV2:
             raise LiveSubmitPolicyError(f"client_order_id {client_order_id} has ambiguous submit result; recover by readonly exchange lookup first")
 
     @staticmethod
-    def recovery_action_for_ambiguous_submit(client_order_id: str) -> Dict[str, str]:
+    def recovery_action_for_ambiguous_submit(client_order_id: str) -> dict[str, str]:
         return {
             "policy": "no_blind_retry",
             "client_order_id": client_order_id,

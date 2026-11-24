@@ -1,5 +1,5 @@
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 from services.ledger_service_v2 import LedgerServiceV2
 
@@ -11,9 +11,9 @@ class PortfolioServiceV2:
 
     @staticmethod
     def utc_now() -> str:
-        return datetime.now(timezone.utc).isoformat()
+        return datetime.now(UTC).isoformat()
 
-    async def ensure_account_state(self, user_id: str, starting_cash: float = 10000.0) -> Dict[str, Any]:
+    async def ensure_account_state(self, user_id: str, starting_cash: float = 10000.0) -> dict[str, Any]:
         state = await self.db.portfolio_state.find_one({"user_id": user_id}, {"_id": 0})
         if state:
             return state
@@ -30,10 +30,10 @@ class PortfolioServiceV2:
         await self.db.portfolio_state.insert_one(state)
         return state
 
-    async def get_positions(self, user_id: str) -> List[Dict[str, Any]]:
+    async def get_positions(self, user_id: str) -> list[dict[str, Any]]:
         return await self.db.positions_v2.find({"user_id": user_id}, {"_id": 0}).to_list(100)
 
-    async def mark_positions(self, user_id: str, price_map: Optional[Dict[str, float]] = None) -> List[Dict[str, Any]]:
+    async def mark_positions(self, user_id: str, price_map: dict[str, float] | None = None) -> list[dict[str, Any]]:
         positions = await self.get_positions(user_id)
         price_map = price_map or {}
         marked = []
@@ -68,8 +68,8 @@ class PortfolioServiceV2:
         user_id: str,
         symbol: str,
         side: str,
-        order: Dict[str, Any],
-        context: Optional[Dict[str, Any]] = None,
+        order: dict[str, Any],
+        context: dict[str, Any] | None = None,
     ) -> None:
         now = self.utc_now()
         trade = {
@@ -96,10 +96,10 @@ class PortfolioServiceV2:
         }
         await self.db.trades_v2.insert_one(trade)
 
-    async def get_trades(self, user_id: str, limit: int = 100) -> List[Dict[str, Any]]:
+    async def get_trades(self, user_id: str, limit: int = 100) -> list[dict[str, Any]]:
         return await self.db.trades_v2.find({"user_id": user_id}, {"_id": 0}).sort("created_at", -1).limit(limit).to_list(limit)
 
-    async def update_risk_snapshot(self, user_id: str, price_map: Optional[Dict[str, float]] = None) -> Dict[str, Any]:
+    async def update_risk_snapshot(self, user_id: str, price_map: dict[str, float] | None = None) -> dict[str, Any]:
         state = await self.ensure_account_state(user_id)
         positions = await self.mark_positions(user_id, price_map)
 
@@ -132,7 +132,7 @@ class PortfolioServiceV2:
         )
         return snapshot
 
-    async def get_dashboard_stats(self, user_id: str) -> Dict[str, Any]:
+    async def get_dashboard_stats(self, user_id: str) -> dict[str, Any]:
         state = await self.ensure_account_state(user_id)
         metrics = await self.db.risk_metrics.find_one({"user_id": user_id}, {"_id": 0}, sort=[("timestamp", -1)])
         if not metrics:
@@ -160,7 +160,7 @@ class PortfolioServiceV2:
         base_units: float,
         notional_usd: float,
         fee_usd: float = 0.0,
-        order: Optional[Dict[str, Any]] = None,
+        order: dict[str, Any] | None = None,
     ) -> None:
         await self.ensure_account_state(user_id)
         fee_usd = float(fee_usd or 0.0)
@@ -190,8 +190,8 @@ class PortfolioServiceV2:
         filled_price: float,
         base_units: float,
         fee_usd: float = 0.0,
-        order: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+        order: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         position = await self.db.positions_v2.find_one({"user_id": user_id, "symbol": symbol})
         if not position:
             return {"realized_pnl": 0.0}
@@ -219,8 +219,8 @@ class PortfolioServiceV2:
         await self.ledger.record_sell_fill(user_id, symbol, filled_price, sell_units, gross_proceeds, net_proceeds, fee_usd, sold_cost_basis, realized_pnl, order=order)
         return {"realized_pnl": round(realized_pnl, 8), "gross_proceeds": round(gross_proceeds, 8), "net_proceeds": round(net_proceeds, 8), "fee_usd": round(fee_usd, 8), "remaining_units": round(max(remaining_units, 0.0), 12)}
 
-    async def rebuild_from_ledger(self, user_id: str, starting_cash: float = 10000.0) -> Dict[str, Any]:
+    async def rebuild_from_ledger(self, user_id: str, starting_cash: float = 10000.0) -> dict[str, Any]:
         return await self.ledger.rebuild_from_ledger(user_id, starting_cash=starting_cash)
 
-    async def reconcile_with_ledger(self, user_id: str, starting_cash: float = 10000.0) -> Dict[str, Any]:
+    async def reconcile_with_ledger(self, user_id: str, starting_cash: float = 10000.0) -> dict[str, Any]:
         return await self.ledger.reconcile(user_id, starting_cash=starting_cash)

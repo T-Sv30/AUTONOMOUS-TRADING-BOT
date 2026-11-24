@@ -1,13 +1,13 @@
 import base64
 import hashlib
 import hmac
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
 from services.coinbase_readonly_adapter_v2 import CoinbaseReadonlyAdapterV2, CoinbaseReadonlyError, CoinbaseReadonlyErrorKind
 from services.live_readonly_service_v2 import LiveReadonlyServiceV2
-from services.trading_mode_v2 import TradingModeService, TradingModeError
+from services.trading_mode_v2 import TradingModeError, TradingModeService
 
 
 class FakeCursor:
@@ -209,7 +209,7 @@ async def test_live_readonly_latest_snapshot_status_missing_fresh_and_stale():
     assert fresh["status"] == "fresh"
     assert fresh["fresh"] is True
 
-    stale_timestamp = (datetime.now(timezone.utc) - timedelta(seconds=1000)).isoformat()
+    stale_timestamp = (datetime.now(UTC) - timedelta(seconds=1000)).isoformat()
     await db.live_readonly_snapshots.update_one({"user_id": "user-1"}, {"$set": {"snapshot_timestamp": stale_timestamp, "created_at": stale_timestamp}})
     stale = await service.latest_snapshot_status("user-1")
     assert stale["status"] == "stale"

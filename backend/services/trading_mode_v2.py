@@ -1,6 +1,6 @@
 import os
 from enum import Enum
-from typing import Any, Dict
+from typing import Any
 
 
 class TradingMode(str, Enum):
@@ -45,7 +45,7 @@ class TradingModeService:
         if self.is_live_trading:
             raise TradingModeError("live-trading mode must use LiveTradingServiceV2 gated execution endpoints")
 
-    def describe(self) -> Dict[str, Any]:
+    def describe(self) -> dict[str, Any]:
         live_enabled = os.getenv("LIVE_TRADING_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
         adapter = os.getenv("LIVE_EXECUTION_ADAPTER", "disabled")
         gated_live_available = self.is_live_trading and live_enabled and adapter == "coinbase_exchange_v2"

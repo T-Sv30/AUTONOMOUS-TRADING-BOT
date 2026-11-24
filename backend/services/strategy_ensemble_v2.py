@@ -1,4 +1,5 @@
-from typing import List, Dict, Any
+from typing import Any
+
 from services.strategy_service_v2 import StrategyServiceV2
 
 
@@ -6,14 +7,14 @@ class StrategyEnsembleV2:
     def __init__(self):
         self.base = StrategyServiceV2()
 
-    def trend_following(self, prices: List[float], has_position: bool) -> Dict[str, Any]:
+    def trend_following(self, prices: list[float], has_position: bool) -> dict[str, Any]:
         s = self.base.generate_signal(prices, has_position)
         score = float(s.get("score", 0.0))
         if score > 0:
             score *= 1.15
         return {**s, "strategy": "trend_following", "score": round(score, 4)}
 
-    def mean_reversion(self, prices: List[float], has_position: bool) -> Dict[str, Any]:
+    def mean_reversion(self, prices: list[float], has_position: bool) -> dict[str, Any]:
         s = self.base.generate_signal(prices, has_position)
         z = float(s.get("features", {}).get("zscore_20", 0.0))
 
@@ -42,7 +43,7 @@ class StrategyEnsembleV2:
             "strategy": "mean_reversion",
         }
 
-    def breakout(self, prices: List[float], has_position: bool) -> Dict[str, Any]:
+    def breakout(self, prices: list[float], has_position: bool) -> dict[str, Any]:
         if len(prices) < 21:
             return {
                 "action": "HOLD",
@@ -83,7 +84,7 @@ class StrategyEnsembleV2:
             "strategy": "breakout",
         }
 
-    def generate_all(self, prices: List[float], has_position: bool) -> List[Dict[str, Any]]:
+    def generate_all(self, prices: list[float], has_position: bool) -> list[dict[str, Any]]:
         return [
             self.trend_following(prices, has_position),
             self.mean_reversion(prices, has_position),

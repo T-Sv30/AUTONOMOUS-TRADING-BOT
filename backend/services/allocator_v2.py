@@ -1,15 +1,15 @@
-from typing import List, Dict, Any
+from typing import Any
 
 
 class AllocatorV2:
-    def rank(self, signals: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def rank(self, signals: list[dict[str, Any]]) -> list[dict[str, Any]]:
         return sorted(
             signals,
             key=lambda s: (abs(float(s.get("score", 0.0))), float(s.get("confidence", 0.0))),
             reverse=True,
         )
 
-    def allocate(self, signals: List[Dict[str, Any]], base_notional: float = 100.0) -> Dict[str, Any]:
+    def allocate(self, signals: list[dict[str, Any]], base_notional: float = 100.0) -> dict[str, Any]:
         ranked = self.rank(signals)
         if not ranked:
             return {"action": "HOLD", "notional": 0.0, "selected": None, "candidates": []}

@@ -1,6 +1,6 @@
 import os
-from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 from services.live_order_state_service_v2 import LiveOrderStateServiceV2
 
@@ -18,7 +18,7 @@ class LivePreSubmitSafetyServiceV2:
 
     @staticmethod
     def utc_now() -> datetime:
-        return datetime.now(timezone.utc)
+        return datetime.now(UTC)
 
     @staticmethod
     def env_bool(name: str, default: bool = False) -> bool:
@@ -34,32 +34,32 @@ class LivePreSubmitSafetyServiceV2:
         except ValueError:
             return 300
 
-    async def halt_record(self, user_id: str) -> Optional[Dict[str, Any]]:
+    async def halt_record(self, user_id: str) -> dict[str, Any] | None:
         return await self.db.live_halts.find_one(
             {"$or": [{"scope": "global"}, {"scope": "user", "user_id": user_id}], "active": True},
             {"_id": 0},
             sort=[("created_at", -1)],
         )
 
-    async def latest_reconciliation(self, user_id: str) -> Optional[Dict[str, Any]]:
+    async def latest_reconciliation(self, user_id: str) -> dict[str, Any] | None:
         return await self.db.live_readonly_reports.find_one({"user_id": user_id}, {"_id": 0}, sort=[("created_at", -1), ("snapshot.timestamp", -1)])
 
     @staticmethod
-    def parse_timestamp(value: Any) -> Optional[datetime]:
+    def parse_timestamp(value: Any) -> datetime | None:
         if not value:
             return None
         try:
             parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
             if parsed.tzinfo is None:
-                parsed = parsed.replace(tzinfo=timezone.utc)
-            return parsed.astimezone(timezone.utc)
+                parsed = parsed.replace(tzinfo=UTC)
+            return parsed.astimezone(UTC)
         except ValueError:
             return None
 
-    async def check(self, user_id: str) -> Dict[str, Any]:
+    async def check(self, user_id: str) -> dict[str, Any]:
         checks = []
 
-        async def add(name: str, passed: bool, reason: str, metadata: Optional[Dict[str, Any]] = None):
+        async def add(name: str, passed: bool, reason: str, metadata: dict[str, Any] | None = None):
             checks.append({"name": name, "passed": passed, "reason": reason, "metadata": metadata or {}})
             if not passed:
                 raise LivePreSubmitSafetyError(reason)
@@ -90,13 +90,13 @@ class LivePreSubmitSafetyServiceV2:
 
         return {"allowed": True, "checks": checks}
 
-    async def safe_check(self, user_id: str) -> Dict[str, Any]:
+    async def safe_check(self, user_id: str) -> dict[str, Any]:
         try:
             return await self.check(user_id)
         except LivePreSubmitSafetyError as exc:
             return {"allowed": False, "reason": str(exc)}
 
-    async def create_halt(self, *, user_id: Optional[str], scope: str, reason: str, created_by: str = "system") -> Dict[str, Any]:
+    async def create_halt(self, *, user_id: str | None, scope: str, reason: str, created_by: str = "system") -> dict[str, Any]:
         record = {"scope": scope, "user_id": user_id, "reason": reason, "active": True, "created_by": created_by, "created_at": self.utc_now().isoformat()}
         await self.db.live_halts.insert_one(record)
         return record

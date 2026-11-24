@@ -1,5 +1,5 @@
-from datetime import datetime, timezone
-from typing import Any, Dict
+from datetime import UTC, datetime
+from typing import Any
 
 
 class AlertService:
@@ -8,7 +8,7 @@ class AlertService:
 
     @staticmethod
     def utc_now() -> str:
-        return datetime.now(timezone.utc).isoformat()
+        return datetime.now(UTC).isoformat()
 
     async def emit(
         self,
@@ -16,8 +16,8 @@ class AlertService:
         alert_type: str,
         severity: str,
         message: str,
-        context: Dict[str, Any] | None = None,
-    ) -> Dict[str, Any]:
+        context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         alert = {
             "user_id": user_id,
             "type": alert_type,

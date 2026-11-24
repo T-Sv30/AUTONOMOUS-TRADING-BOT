@@ -38,10 +38,15 @@ select = ["E", "F", "I", "B", "UP", "ASYNC", "S"]
 ignore = [
   "S101",  # pytest assertions are expected in tests
   "S311",  # simulation RNG is not used for cryptographic purposes
+  "E501",  # line length: style only; adopt `ruff format` in its own PR to avoid conflicts with open branches
+  "UP042", # StrEnum rewrite changes str() output of existing enums; not worth the behavior risk
 ]
 
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Query", "fastapi.Header", "fastapi.Body", "fastapi.Security"]
+
 [tool.ruff.lint.per-file-ignores]
-"tests/**/*.py" = ["S101", "S105", "S106", "S311"]
+"tests/**/*.py" = ["S101", "S105", "S106", "S311", "S603"]  # S603: tests spawn sys.executable with literal code
 
 [tool.bandit]
 exclude_dirs = ["tests", ".venv", "venv"]

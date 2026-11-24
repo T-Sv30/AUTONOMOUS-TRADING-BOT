@@ -1,9 +1,10 @@
 import hashlib
 import json
 import secrets
-from datetime import datetime, timezone
+from collections.abc import Iterable
+from datetime import UTC, datetime
 from enum import Enum
-from typing import Any, Dict, Iterable, Optional
+from typing import Any
 
 
 class LiveOrderStateError(RuntimeError):
@@ -72,24 +73,24 @@ class LiveOrderStateServiceV2:
 
     @staticmethod
     def utc_now() -> str:
-        return datetime.now(timezone.utc).isoformat()
+        return datetime.now(UTC).isoformat()
 
     @staticmethod
-    def canonical_json(payload: Dict[str, Any]) -> str:
+    def canonical_json(payload: dict[str, Any]) -> str:
         return json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
 
     @classmethod
-    def sha256_payload(cls, payload: Dict[str, Any]) -> str:
+    def sha256_payload(cls, payload: dict[str, Any]) -> str:
         return hashlib.sha256(cls.canonical_json(payload).encode("utf-8")).hexdigest()
 
     @staticmethod
     def new_order_id() -> str:
         return f"live_order_{secrets.token_urlsafe(18)}"
 
-    async def latest_transition(self, order_id: str) -> Optional[Dict[str, Any]]:
+    async def latest_transition(self, order_id: str) -> dict[str, Any] | None:
         return await self.db.live_order_transitions.find_one({"order_id": order_id}, {"_id": 0}, sort=[("sequence", -1)])
 
-    async def latest_unresolved_for_user(self, user_id: str) -> Optional[Dict[str, Any]]:
+    async def latest_unresolved_for_user(self, user_id: str) -> dict[str, Any] | None:
         return await self.db.live_order_transitions.find_one(
             {"user_id": user_id, "is_latest": True, "state": {"$in": sorted(UNRESOLVED_STATES)}},
             {"_id": 0},
@@ -105,12 +106,12 @@ class LiveOrderStateServiceV2:
         user_id: str,
         symbol: str,
         side: str,
-        notional_usd: Optional[float] = None,
-        base_units: Optional[float] = None,
-        client_order_id: Optional[str] = None,
+        notional_usd: float | None = None,
+        base_units: float | None = None,
+        client_order_id: str | None = None,
         request_id: str = "",
-        metadata: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         order_id = self.new_order_id()
         payload = {
             "order_id": order_id,
@@ -131,7 +132,7 @@ class LiveOrderStateServiceV2:
             "version": self.VERSION,
         }
         payload_hash = self.sha256_payload(payload)
-        transition_hash = hashlib.sha256(f"GENESIS:{payload_hash}".encode("utf-8")).hexdigest()
+        transition_hash = hashlib.sha256(f"GENESIS:{payload_hash}".encode()).hexdigest()
         record = {**payload, "previous_hash": "GENESIS", "payload_hash": payload_hash, "transition_hash": transition_hash}
         await self.db.live_order_transitions.insert_one(record)
         return record
@@ -143,8 +144,8 @@ class LiveOrderStateServiceV2:
         next_state: str,
         reason: str,
         request_id: str = "",
-        metadata: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         latest = await self.latest_transition(order_id)
         if not latest:
             raise LiveOrderStateError("live order not found")
@@ -173,18 +174,18 @@ class LiveOrderStateServiceV2:
         }
         payload_hash = self.sha256_payload(payload)
         previous_hash = latest["transition_hash"]
-        transition_hash = hashlib.sha256(f"{previous_hash}:{payload_hash}".encode("utf-8")).hexdigest()
+        transition_hash = hashlib.sha256(f"{previous_hash}:{payload_hash}".encode()).hexdigest()
         record = {**payload, "previous_hash": previous_hash, "payload_hash": payload_hash, "transition_hash": transition_hash}
         await self.db.live_order_transitions.insert_one(record)
         return record
 
-    async def transition_many(self, order_id: str, states: Iterable[str], *, reason: str, request_id: str = "", metadata: Optional[Dict[str, Any]] = None):
+    async def transition_many(self, order_id: str, states: Iterable[str], *, reason: str, request_id: str = "", metadata: dict[str, Any] | None = None):
         latest = None
         for state in states:
             latest = await self.transition(order_id=order_id, next_state=state, reason=reason, request_id=request_id, metadata=metadata)
         return latest
 
-    async def verify_chain(self, order_id: str, limit: int = 1000) -> Dict[str, Any]:
+    async def verify_chain(self, order_id: str, limit: int = 1000) -> dict[str, Any]:
         records = await self.db.live_order_transitions.find({"order_id": order_id}, {"_id": 0}).sort("sequence", 1).limit(limit).to_list(limit)
         expected_previous = "GENESIS"
         issues = []
@@ -193,7 +194,7 @@ class LiveOrderStateServiceV2:
             chain_fields = {"previous_hash", "payload_hash", "transition_hash"}
             payload = {key: value for key, value in record.items() if key not in chain_fields}
             payload_hash = self.sha256_payload(payload)
-            transition_hash = hashlib.sha256(f"{expected_previous}:{payload_hash}".encode("utf-8")).hexdigest()
+            transition_hash = hashlib.sha256(f"{expected_previous}:{payload_hash}".encode()).hexdigest()
             if record.get("previous_hash") != expected_previous:
                 issues.append({"index": index, "type": "previous_hash_mismatch"})
             if record.get("payload_hash") != payload_hash:

@@ -1,6 +1,7 @@
+from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Mapping, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -9,9 +10,9 @@ class AutonomousGateCheck:
     passed: bool
     severity: str
     detail: str
-    observed: Optional[Dict[str, Any]] = None
+    observed: dict[str, Any] | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         payload = {
             "name": self.name,
             "passed": self.passed,
@@ -48,10 +49,10 @@ class Phase16AutonomousGateServiceV2:
 
     @staticmethod
     def utc_now() -> str:
-        return datetime.now(timezone.utc).isoformat()
+        return datetime.now(UTC).isoformat()
 
     @classmethod
-    def policy(cls) -> Dict[str, Any]:
+    def policy(cls) -> dict[str, Any]:
         return {
             "phase": "phase_16_autonomous_live_gate_design",
             "release_scope": "design_only_no_execution",
@@ -98,7 +99,7 @@ class Phase16AutonomousGateServiceV2:
         return str(value).strip().lower() in {"1", "true", "yes", "on", "enabled"}
 
     @classmethod
-    def evaluate_design(cls, config: Mapping[str, Any]) -> Dict[str, Any]:
+    def evaluate_design(cls, config: Mapping[str, Any]) -> dict[str, Any]:
         strategy = str(config.get("strategy", "")).strip()
         symbols = {str(symbol).upper() for symbol in (config.get("symbols") or [])}
         unknown_symbols = sorted(symbols - cls.DEFAULT_ALLOWED_SYMBOLS)
@@ -129,7 +130,7 @@ class Phase16AutonomousGateServiceV2:
         cooldown_after_loss_minutes = as_int("cooldown_after_loss_minutes")
         cooldown_after_error_minutes = as_int("cooldown_after_error_minutes")
 
-        checks: List[AutonomousGateCheck] = [
+        checks: list[AutonomousGateCheck] = [
             AutonomousGateCheck(
                 name="candidate_mode_explicit",
                 passed=config.get("mode") == cls.REQUIRED_MODE,
@@ -275,7 +276,7 @@ class Phase16AutonomousGateServiceV2:
             "evaluated_at": cls.utc_now(),
         }
 
-    async def evaluate(self, user_id: str, config: Mapping[str, Any]) -> Dict[str, Any]:
+    async def evaluate(self, user_id: str, config: Mapping[str, Any]) -> dict[str, Any]:
         result = self.evaluate_design(config)
         await self.db.autonomous_gate_design_reviews.insert_one({
             "user_id": user_id,

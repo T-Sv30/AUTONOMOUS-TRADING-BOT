@@ -1,7 +1,7 @@
 import hashlib
 import json
-from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 from services.live_readonly_service_v2 import LiveReadonlyServiceV2
 from services.live_trading_service_v2 import LiveTradingServiceV2
@@ -22,17 +22,17 @@ class ManualLivePilotWorkflowServiceV2:
 
     @staticmethod
     def utc_now() -> str:
-        return datetime.now(timezone.utc).isoformat()
+        return datetime.now(UTC).isoformat()
 
     @staticmethod
-    def canonical_hash(payload: Dict[str, Any]) -> str:
+    def canonical_hash(payload: dict[str, Any]) -> str:
         return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")).hexdigest()
 
-    async def pending_reconciliation_requirements(self, user_id: str, limit: int = 100) -> Dict[str, Any]:
+    async def pending_reconciliation_requirements(self, user_id: str, limit: int = 100) -> dict[str, Any]:
         pending = await self.db.live_post_submit_reconciliation_requirements.find({"user_id": user_id, "status": "pending"}, {"_id": 0}).sort("created_at", -1).limit(limit).to_list(limit)
         return {"user_id": user_id, "pending_count": len(pending), "pending": pending, "checked_at": self.utc_now()}
 
-    async def resolve_reconciliation_requirement(self, *, user_id: str, live_order_id: str, resolution: str, notes: Optional[str] = None) -> Dict[str, Any]:
+    async def resolve_reconciliation_requirement(self, *, user_id: str, live_order_id: str, resolution: str, notes: str | None = None) -> dict[str, Any]:
         existing = await self.db.live_post_submit_reconciliation_requirements.find_one({"user_id": user_id, "live_order_id": live_order_id}, {"_id": 0})
         if not existing:
             return {"success": False, "status": "missing", "reason": "post-submit reconciliation requirement not found", "live_order_id": live_order_id}
@@ -54,7 +54,7 @@ class ManualLivePilotWorkflowServiceV2:
         resolved = {**existing, **update}
         return {"success": True, "status": "resolved", "live_order_id": live_order_id, "requirement": resolved}
 
-    async def build_pilot_report(self, user_id: str, live_order_id: str) -> Dict[str, Any]:
+    async def build_pilot_report(self, user_id: str, live_order_id: str) -> dict[str, Any]:
         transitions = await self.db.live_order_transitions.find({"user_id": user_id, "order_id": live_order_id}, {"_id": 0}).sort("sequence", 1).limit(200).to_list(200)
         requirement = await self.db.live_post_submit_reconciliation_requirements.find_one({"user_id": user_id, "live_order_id": live_order_id}, {"_id": 0})
         audits = await self.db.live_order_audits.find({"user_id": user_id, "live_order_id": live_order_id}, {"_id": 0}).sort("created_at", 1).limit(100).to_list(100)
@@ -84,6 +84,6 @@ class ManualLivePilotWorkflowServiceV2:
         )
         return report
 
-    async def list_pilot_reports(self, user_id: str, limit: int = 100) -> Dict[str, Any]:
+    async def list_pilot_reports(self, user_id: str, limit: int = 100) -> dict[str, Any]:
         reports = await self.db.manual_live_pilot_reports.find({"user_id": user_id}, {"_id": 0}).sort("generated_at", -1).limit(limit).to_list(limit)
         return {"user_id": user_id, "reports": reports, "count": len(reports)}

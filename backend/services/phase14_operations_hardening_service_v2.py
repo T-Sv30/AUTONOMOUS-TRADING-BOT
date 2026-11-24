@@ -1,6 +1,7 @@
+from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Mapping, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -9,9 +10,9 @@ class OperationsCheck:
     passed: bool
     severity: str
     detail: str
-    observed: Optional[Dict[str, Any]] = None
+    observed: dict[str, Any] | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         payload = {
             "name": self.name,
             "passed": self.passed,
@@ -52,10 +53,10 @@ class Phase14OperationsHardeningServiceV2:
 
     @staticmethod
     def utc_now() -> str:
-        return datetime.now(timezone.utc).isoformat()
+        return datetime.now(UTC).isoformat()
 
     @classmethod
-    def policy(cls) -> Dict[str, Any]:
+    def policy(cls) -> dict[str, Any]:
         return {
             "phase": "phase_14_production_operations_hardening",
             "release_scope": "operations_ready_for_controlled_manual_live",
@@ -75,7 +76,7 @@ class Phase14OperationsHardeningServiceV2:
         return str(value).strip().lower() in {"1", "true", "yes", "on", "enabled"}
 
     @classmethod
-    def evaluate_config(cls, config: Mapping[str, Any]) -> Dict[str, Any]:
+    def evaluate_config(cls, config: Mapping[str, Any]) -> dict[str, Any]:
         runbooks = set(config.get("runbooks", []) or [])
         monitors = set(config.get("monitors", []) or [])
         alert_channels = set(config.get("alert_channels", []) or [])
@@ -88,7 +89,7 @@ class Phase14OperationsHardeningServiceV2:
         missing_monitors = sorted(cls.REQUIRED_MONITORS - monitors)
         missing_alert_channels = sorted(cls.REQUIRED_ALERT_CHANNELS - alert_channels)
 
-        checks: List[OperationsCheck] = [
+        checks: list[OperationsCheck] = [
             OperationsCheck(
                 name="deployment_runbooks_complete",
                 passed=not missing_runbooks,
@@ -191,7 +192,7 @@ class Phase14OperationsHardeningServiceV2:
             "evaluated_at": cls.utc_now(),
         }
 
-    async def collect_live_state(self, user_id: str) -> Dict[str, Any]:
+    async def collect_live_state(self, user_id: str) -> dict[str, Any]:
         pending = await self.db.live_post_submit_reconciliation_requirements.find({"user_id": user_id, "status": "pending"}, {"_id": 0}).limit(100).to_list(100)
         complete_reports = await self.db.manual_live_pilot_reports.find({"user_id": user_id, "status": "complete"}, {"_id": 0}).limit(100).to_list(100)
         signoffs = await self.db.manual_live_pilot_signoffs.find({"user_id": user_id}, {"_id": 0}).limit(100).to_list(100)
@@ -207,7 +208,7 @@ class Phase14OperationsHardeningServiceV2:
             "collected_at": self.utc_now(),
         }
 
-    async def evaluate(self, user_id: str, config: Mapping[str, Any]) -> Dict[str, Any]:
+    async def evaluate(self, user_id: str, config: Mapping[str, Any]) -> dict[str, Any]:
         live_state = await self.collect_live_state(user_id)
         merged = {**dict(config), **live_state}
         result = self.evaluate_config(merged)

@@ -1,14 +1,14 @@
-import numpy as np
-from typing import Dict, List, Any
-from datetime import datetime, timezone, timedelta
 import logging
+from typing import Any
+
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
 class PerformanceAnalyzer:
     """Advanced performance analytics: Sharpe, Sortino, Calmar, etc."""
     
-    def calculate_sharpe_ratio(self, returns: List[float], risk_free_rate: float = 0.02) -> float:
+    def calculate_sharpe_ratio(self, returns: list[float], risk_free_rate: float = 0.02) -> float:
         """Calculate Sharpe Ratio"""
         if len(returns) < 2:
             return 0.0
@@ -22,7 +22,7 @@ class PerformanceAnalyzer:
         sharpe = np.mean(excess_returns) / np.std(excess_returns) * np.sqrt(252)
         return round(float(sharpe), 2)
     
-    def calculate_sortino_ratio(self, returns: List[float], risk_free_rate: float = 0.02) -> float:
+    def calculate_sortino_ratio(self, returns: list[float], risk_free_rate: float = 0.02) -> float:
         """Calculate Sortino Ratio (only considers downside volatility)"""
         if len(returns) < 2:
             return 0.0
@@ -39,7 +39,7 @@ class PerformanceAnalyzer:
         sortino = np.mean(excess_returns) / np.std(downside_returns) * np.sqrt(252)
         return round(float(sortino), 2)
     
-    def calculate_calmar_ratio(self, returns: List[float], max_drawdown: float) -> float:
+    def calculate_calmar_ratio(self, returns: list[float], max_drawdown: float) -> float:
         """Calculate Calmar Ratio (return / max drawdown)"""
         if max_drawdown == 0:
             return 0.0
@@ -49,7 +49,7 @@ class PerformanceAnalyzer:
         
         return round(float(calmar), 2)
     
-    def calculate_max_consecutive_wins_losses(self, trades: List[Dict[str, Any]]) -> Dict[str, int]:
+    def calculate_max_consecutive_wins_losses(self, trades: list[dict[str, Any]]) -> dict[str, int]:
         """Calculate maximum consecutive wins and losses"""
         if not trades:
             return {'max_wins': 0, 'max_losses': 0}
@@ -76,7 +76,7 @@ class PerformanceAnalyzer:
             'max_consecutive_losses': max_losses
         }
     
-    def calculate_expectancy(self, trades: List[Dict[str, Any]]) -> float:
+    def calculate_expectancy(self, trades: list[dict[str, Any]]) -> float:
         """Calculate trading expectancy (average $ won per trade)"""
         if not trades:
             return 0.0
@@ -95,7 +95,7 @@ class PerformanceAnalyzer:
         
         return round(float(expectancy), 2)
     
-    def calculate_ulcer_index(self, equity_curve: List[float]) -> float:
+    def calculate_ulcer_index(self, equity_curve: list[float]) -> float:
         """Calculate Ulcer Index (measure of downside volatility)"""
         if len(equity_curve) < 2:
             return 0.0
@@ -113,8 +113,8 @@ class PerformanceAnalyzer:
         ulcer = np.sqrt(np.mean(drawdowns))
         return round(float(ulcer), 2)
     
-    async def get_comprehensive_analysis(self, trades: List[Dict[str, Any]], 
-                                          equity_history: List[float]) -> Dict[str, Any]:
+    async def get_comprehensive_analysis(self, trades: list[dict[str, Any]], 
+                                          equity_history: list[float]) -> dict[str, Any]:
         """Get comprehensive performance analysis"""
         
         if not trades or not equity_history:
@@ -178,7 +178,7 @@ class PerformanceAnalyzer:
             } if worst_trade else None
         }
     
-    def _default_analysis(self) -> Dict[str, Any]:
+    def _default_analysis(self) -> dict[str, Any]:
         """Return default analysis when not enough data"""
         return {
             'sharpe_ratio': 0.0,

@@ -1,5 +1,5 @@
 import logging
-from typing import Any, Dict, Optional
+from typing import Any
 
 from fastapi import HTTPException, Request
 from fastapi.exceptions import RequestValidationError
@@ -26,7 +26,7 @@ def error_code_for_status(status_code: int) -> str:
     }.get(status_code, "HTTP_ERROR")
 
 
-def error_envelope(*, code: str, message: str, request_id: str, details: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+def error_envelope(*, code: str, message: str, request_id: str, details: dict[str, Any] | None = None) -> dict[str, Any]:
     return {
         "error": {
             "code": code,

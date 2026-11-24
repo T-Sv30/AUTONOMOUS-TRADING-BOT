@@ -1,5 +1,5 @@
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 os.environ.setdefault("DEBUG", "True")
 os.environ.setdefault("JWT_SECRET", "test-secret-for-live-state-tests-more-than-32-chars")
@@ -58,7 +58,7 @@ async def test_pre_submit_safety_blocks_without_fresh_reconciliation():
 async def test_pre_submit_safety_allows_with_fresh_reconciliation_and_no_unresolved_order():
     user_id = "safety-user-fresh"
     try:
-        await db.live_readonly_reports.insert_one({"user_id": user_id, "checked_at": datetime.now(timezone.utc).isoformat(), "status": "ok"})
+        await db.live_readonly_reports.insert_one({"user_id": user_id, "checked_at": datetime.now(UTC).isoformat(), "status": "ok"})
         result = await LivePreSubmitSafetyServiceV2(db).safe_check(user_id)
         assert result["allowed"] is True
     finally:
@@ -70,7 +70,7 @@ async def test_pre_submit_safety_blocks_unresolved_live_order():
     user_id = "safety-user-unresolved"
     states = LiveOrderStateServiceV2(db)
     try:
-        await db.live_readonly_reports.insert_one({"user_id": user_id, "checked_at": datetime.now(timezone.utc).isoformat(), "status": "ok"})
+        await db.live_readonly_reports.insert_one({"user_id": user_id, "checked_at": datetime.now(UTC).isoformat(), "status": "ok"})
         await states.create_order(user_id=user_id, symbol="BTC-USD", side="BUY", notional_usd=5)
         result = await LivePreSubmitSafetyServiceV2(db).safe_check(user_id)
         assert result["allowed"] is False
@@ -84,7 +84,7 @@ async def test_pre_submit_safety_blocks_active_halt():
     user_id = "safety-user-halt"
     safety = LivePreSubmitSafetyServiceV2(db)
     try:
-        await db.live_readonly_reports.insert_one({"user_id": user_id, "checked_at": datetime.now(timezone.utc).isoformat(), "status": "ok"})
+        await db.live_readonly_reports.insert_one({"user_id": user_id, "checked_at": datetime.now(UTC).isoformat(), "status": "ok"})
         await safety.create_halt(user_id=user_id, scope="user", reason="test halt", created_by="pytest")
         result = await safety.safe_check(user_id)
         assert result["allowed"] is False

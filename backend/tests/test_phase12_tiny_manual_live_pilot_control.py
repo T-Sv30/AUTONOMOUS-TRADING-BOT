@@ -1,6 +1,5 @@
 from services.phase12_tiny_manual_live_pilot_service_v2 import Phase12TinyManualLivePilotServiceV2
 
-
 ACK = Phase12TinyManualLivePilotServiceV2.REQUIRED_ACKNOWLEDGEMENT
 
 

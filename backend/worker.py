@@ -36,7 +36,7 @@ async def run_worker() -> None:
         try:
             loop.add_signal_handler(signum, request_stop, signame)
         except NotImplementedError:
-            signal.signal(signum, lambda *_: request_stop(signame))
+            signal.signal(signum, lambda *_, name=signame: request_stop(name))
 
     log_event(logger, logging.INFO, "worker_starting", runtime_role=RUNTIME_ROLE.value)
     manager_task = asyncio.create_task(manager.start_manager(), name="bot-manager")

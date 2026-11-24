@@ -1,7 +1,6 @@
 import contextvars
 import re
 import uuid
-from typing import Optional
 
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -10,7 +9,7 @@ _REQUEST_ID = contextvars.ContextVar("request_id", default="")
 _VALID_REQUEST_ID = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
 
 
-def normalize_request_id(value: Optional[str]) -> str:
+def normalize_request_id(value: str | None) -> str:
     if value and _VALID_REQUEST_ID.match(value):
         return value
     return uuid.uuid4().hex

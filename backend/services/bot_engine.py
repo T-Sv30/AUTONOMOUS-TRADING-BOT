@@ -1,12 +1,12 @@
-from datetime import datetime, timezone
 import asyncio
 import logging
+from datetime import UTC, datetime
 
 from services.alert_service import AlertService
 from services.execution_control_v2 import ExecutionControlV2
 from services.execution_service_v2 import ExecutionServiceV2
-from services.portfolio_service_v2 import PortfolioServiceV2
 from services.market_data_service import MarketDataService
+from services.portfolio_service_v2 import PortfolioServiceV2
 from services.risk_guard_v2 import RiskGuardV2
 from services.signal_planner_v2 import SignalPlannerV2
 from services.structured_logging import log_event
@@ -79,7 +79,7 @@ class BotEngine:
     async def halt_bot(self, user_id: str, reason: str, metrics=None):
         await self.db.bot_configs.update_one(
             {"user_id": user_id},
-            {"$set": {"is_active": False, "halt_reason": reason, "updated_at": datetime.now(timezone.utc).isoformat()}},
+            {"$set": {"is_active": False, "halt_reason": reason, "updated_at": datetime.now(UTC).isoformat()}},
         )
         log_event(logger, logging.WARNING, "bot_halted", user_id=user_id, reason=reason)
         await self.alerts.emit(user_id, "bot_halted", "critical", f"Bot halted: {reason}", metrics or {})
@@ -140,7 +140,7 @@ class BotEngine:
                 return
 
             await self.portfolio.record_buy_fill(user_id, symbol, order["filled_price"], order["base_units"], order["notional_usd"], order.get("fee_usd", 0.0), order=order)
-            await self.db.portfolio_state.update_one({"user_id": user_id}, {"$set": {"last_trade_at": datetime.now(timezone.utc).isoformat()}}, upsert=True)
+            await self.db.portfolio_state.update_one({"user_id": user_id}, {"$set": {"last_trade_at": datetime.now(UTC).isoformat()}}, upsert=True)
             await self.portfolio.update_risk_snapshot(user_id, {symbol: float(order["filled_price"])})
         finally:
             await self.execution_control.release_lock(lock["key"])
@@ -175,7 +175,7 @@ class BotEngine:
 
             result = await self.portfolio.record_sell_fill(user_id, symbol, order["filled_price"], order["base_units"], order.get("fee_usd", 0.0), order=order)
             await self.db.trades_v2.update_one({"client_order_id": order.get("client_order_id")}, {"$set": {"realized_pnl": result.get("realized_pnl", 0.0), "idempotency_key": idempotency_key}})
-            await self.db.portfolio_state.update_one({"user_id": user_id}, {"$set": {"last_trade_at": datetime.now(timezone.utc).isoformat()}}, upsert=True)
+            await self.db.portfolio_state.update_one({"user_id": user_id}, {"$set": {"last_trade_at": datetime.now(UTC).isoformat()}}, upsert=True)
             await self.portfolio.update_risk_snapshot(user_id, {symbol: float(order["filled_price"])})
         finally:
             await self.execution_control.release_lock(lock["key"])

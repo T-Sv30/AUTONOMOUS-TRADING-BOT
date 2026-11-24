@@ -1,4 +1,4 @@
-from typing import Any, Dict, List
+from typing import Any
 
 
 class MongoIndexServiceV2:
@@ -7,8 +7,8 @@ class MongoIndexServiceV2:
     def __init__(self, db):
         self.db = db
 
-    async def ensure_indexes(self) -> Dict[str, Any]:
-        created: List[str] = []
+    async def ensure_indexes(self) -> dict[str, Any]:
+        created: list[str] = []
 
         async def create(collection, keys, **kwargs):
             name = await collection.create_index(keys, **kwargs)

@@ -1,5 +1,5 @@
-from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 from services.coinbase_live_execution_adapter_v2 import (
     CoinbaseLiveExecutionAdapterV2,
@@ -32,8 +32,8 @@ class LiveTradingServiceV2:
     def __init__(
         self,
         db,
-        adapter: Optional[CoinbaseLiveExecutionAdapterV2] = None,
-        gate: Optional[LiveTradingGateV2] = None,
+        adapter: CoinbaseLiveExecutionAdapterV2 | None = None,
+        gate: LiveTradingGateV2 | None = None,
     ):
         self.db = db
         self.adapter = adapter or CoinbaseLiveExecutionAdapterV2()
@@ -43,12 +43,12 @@ class LiveTradingServiceV2:
 
     @staticmethod
     def utc_now() -> str:
-        return datetime.now(timezone.utc).isoformat()
+        return datetime.now(UTC).isoformat()
 
-    async def _user_config(self, user_id: str) -> Dict[str, Any]:
+    async def _user_config(self, user_id: str) -> dict[str, Any]:
         return await self.db.bot_configs.find_one({"user_id": user_id}, {"_id": 0}) or {}
 
-    async def _audit(self, record: Dict[str, Any]) -> Dict[str, Any]:
+    async def _audit(self, record: dict[str, Any]) -> dict[str, Any]:
         return await self.audits.append(record)
 
     async def preview_market_buy(
@@ -56,7 +56,7 @@ class LiveTradingServiceV2:
         user_id: str,
         symbol: str,
         notional_usd: float,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         return await self.place_market_buy(
             user_id=user_id,
             symbol=symbol,
@@ -69,9 +69,9 @@ class LiveTradingServiceV2:
         user_id: str,
         symbol: str,
         notional_usd: float,
-        approval_token: Optional[str] = None,
+        approval_token: str | None = None,
         dry_run: bool = False,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         return await self._place_manual_order(
             user_id=user_id,
             symbol=symbol,
@@ -89,7 +89,7 @@ class LiveTradingServiceV2:
         symbol: str,
         base_units: float,
         reference_price: float,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         return await self.place_market_sell(
             user_id=user_id,
             symbol=symbol,
@@ -104,9 +104,9 @@ class LiveTradingServiceV2:
         symbol: str,
         base_units: float,
         reference_price: float,
-        approval_token: Optional[str] = None,
+        approval_token: str | None = None,
         dry_run: bool = False,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         notional_usd = float(base_units) * float(reference_price)
         return await self._place_manual_order(
             user_id=user_id,
@@ -126,11 +126,11 @@ class LiveTradingServiceV2:
         symbol: str,
         side: str,
         notional_usd: float,
-        base_units: Optional[float],
-        reference_price: Optional[float],
-        approval_token: Optional[str],
+        base_units: float | None,
+        reference_price: float | None,
+        approval_token: str | None,
         dry_run: bool,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         user_config = await self._user_config(user_id)
         mode = TradingModeService().mode.value
 

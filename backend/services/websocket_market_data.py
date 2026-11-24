@@ -1,9 +1,11 @@
 import asyncio
 import json
 import logging
-from typing import Dict, Callable, Any
+from collections.abc import Callable
+from datetime import UTC, datetime
+from typing import Any
+
 import websockets
-from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +64,7 @@ class WebSocketMarketData:
                 logger.error(f"Unexpected error for {symbol}: {e}")
                 await asyncio.sleep(5)
     
-    async def _handle_message(self, symbol: str, data: Dict[str, Any]):
+    async def _handle_message(self, symbol: str, data: dict[str, Any]):
         """Process incoming WebSocket message"""
         if data.get('type') == 'ticker':
             # Update price cache
@@ -72,7 +74,7 @@ class WebSocketMarketData:
                 'volume_24h': float(data.get('volume_24h', 0)),
                 'best_bid': float(data.get('best_bid', 0)),
                 'best_ask': float(data.get('best_ask', 0)),
-                'timestamp': datetime.now(timezone.utc).isoformat()
+                'timestamp': datetime.now(UTC).isoformat()
             }
             
             self.price_cache[symbol] = price_update
@@ -92,7 +94,7 @@ class WebSocketMarketData:
         self.subscribers[symbol].append(callback)
         logger.info(f"Added subscriber for {symbol}")
     
-    def get_latest_price(self, symbol: str) -> Dict[str, Any]:
+    def get_latest_price(self, symbol: str) -> dict[str, Any]:
         """Get latest cached price for a symbol"""
         return self.price_cache.get(symbol, {})
     
@@ -104,8 +106,8 @@ class WebSocketMarketData:
             try:
                 await ws.close()
                 logger.info(f"Closed WebSocket for {symbol}")
-            except:
-                pass
+            except Exception as exc:
+                logger.debug("Ignoring error while closing WebSocket for %s: %s", symbol, exc)
         
         self.connections.clear()
         logger.info("WebSocket service stopped")
