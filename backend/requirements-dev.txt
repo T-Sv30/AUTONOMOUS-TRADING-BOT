@@ -1,5 +1,5 @@
 bandit==1.8.6
 coverage==7.6.10
 pip-audit==2.7.3
-pytest-cov==5.0.0
+pytest-cov==7.1.0
 ruff==0.17.6
