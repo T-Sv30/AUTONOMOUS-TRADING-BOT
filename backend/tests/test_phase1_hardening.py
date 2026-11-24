@@ -3,7 +3,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 
 
@@ -20,8 +19,7 @@ def run_backend_python(code: str, env_updates: dict[str, str | None]):
         cwd=BACKEND_DIR,
         env=env,
         text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         timeout=10,
     )
 
@@ -45,7 +43,7 @@ def test_runtime_config_rejects_wildcard_cors_outside_debug():
         "import runtime_config",
         {
             "DEBUG": "False",
-            "JWT_SECRET": "test-secret",
+            "JWT_SECRET": "phase1-hardening-test-secret-with-more-than-32-chars",
             "CORS_ORIGINS": "*",
         },
     )
@@ -76,7 +74,7 @@ assert cors.kwargs["allow_headers"] == ["Authorization", "Content-Type"]
 """,
         {
             "DEBUG": "False",
-            "JWT_SECRET": "test-secret",
+            "JWT_SECRET": "phase1-hardening-test-secret-with-more-than-32-chars",
             "CORS_ORIGINS": "http://localhost:3000",
         },
     )
@@ -104,7 +102,7 @@ assert response.status_code == 401
 """,
         {
             "DEBUG": "False",
-            "JWT_SECRET": "test-secret",
+            "JWT_SECRET": "phase1-hardening-test-secret-with-more-than-32-chars",
             "CORS_ORIGINS": "http://localhost:3000",
         },
     )

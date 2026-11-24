@@ -5,6 +5,8 @@ httpx==0.28.1
 motor==3.3.1
 numpy==2.3.4
 passlib[bcrypt]==1.7.4
+# bcrypt 5 raises on passlib 1.7.4's startup self-test (72-byte limit); 4.3 is the last compatible line.
+bcrypt==4.3.0
 PyJWT==2.10.1
 pydantic==2.12.3
 pymongo==4.5.0
