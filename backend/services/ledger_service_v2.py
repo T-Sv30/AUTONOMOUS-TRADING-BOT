@@ -186,7 +186,10 @@ class LedgerServiceV2:
             symbol = entry.get("symbol")
             event_type = entry.get("event_type")
             cash_balance += float(entry.get("cash_delta", 0.0) or 0.0)
-            realized_pnl += float(entry.get("realized_pnl", 0.0) or 0.0)
+            # SELL_FILL entries carry realized_pnl for display; the REALIZED_PNL entry is the
+            # single accounting source, so counting both would double realized PnL.
+            if event_type == "REALIZED_PNL":
+                realized_pnl += float(entry.get("realized_pnl", 0.0) or 0.0)
             if symbol:
                 position = positions.setdefault(symbol, {"base_units": 0.0, "notional_usd": 0.0, "fees_paid_usd": 0.0})
                 position["base_units"] += float(entry.get("base_delta", 0.0) or 0.0)
