@@ -225,5 +225,5 @@ class Phase12TinyManualLivePilotServiceV2:
             "decision": decision,
             "created_at": self.utc_now(),
         }
-        await self.db.manual_live_pilot_candidate_decisions.insert_one(record)
+        await self.db.manual_live_pilot_candidate_decisions.insert_one(dict(record))  # copy: insert_one adds an ObjectId _id that breaks JSON responses
         return record

@@ -60,7 +60,7 @@ class LedgerServiceV2:
             "created_at": entry.get("created_at") or now,
         }
         normalized["entry_id"] = entry.get("entry_id") or self.stable_entry_id(normalized)
-        await self.db.ledger_entries.insert_one(normalized)
+        await self.db.ledger_entries.insert_one(dict(normalized))  # copy: insert_one adds an ObjectId _id that breaks JSON responses
         return normalized
 
     async def record_buy_fill(

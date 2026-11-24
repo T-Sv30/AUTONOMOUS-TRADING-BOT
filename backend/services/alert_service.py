@@ -27,7 +27,7 @@ class AlertService:
             "created_at": self.utc_now(),
             "acknowledged": False,
         }
-        await self.db.alerts.insert_one(alert)
+        await self.db.alerts.insert_one(dict(alert))  # copy: insert_one adds an ObjectId _id that breaks JSON responses
         return alert
 
     async def list_alerts(self, user_id: str, limit: int = 100):

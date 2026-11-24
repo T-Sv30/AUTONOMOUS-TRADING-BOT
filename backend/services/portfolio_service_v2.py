@@ -27,7 +27,7 @@ class PortfolioServiceV2:
             "daily_start_equity": float(starting_cash),
             "updated_at": now,
         }
-        await self.db.portfolio_state.insert_one(state)
+        await self.db.portfolio_state.insert_one(dict(state))  # copy: insert_one adds an ObjectId _id that breaks JSON responses
         return state
 
     async def get_positions(self, user_id: str) -> list[dict[str, Any]]:

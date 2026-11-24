@@ -119,7 +119,7 @@ class LiveApprovalChallengeServiceV2:
             "used_at": None,
             "version": self.VERSION,
         }
-        await self.db.live_approval_challenges.insert_one(record)
+        await self.db.live_approval_challenges.insert_one(dict(record))  # copy: insert_one adds an ObjectId _id that breaks JSON responses
         return {
             "challenge_id": challenge_id,
             "approval_token": approval_token,

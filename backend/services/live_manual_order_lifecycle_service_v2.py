@@ -151,5 +151,5 @@ class LiveManualOrderLifecycleServiceV2:
             "reason": "post-submit live-readonly reconciliation required before next non-dry-run live order",
             "created_at": self.utc_now(),
         }
-        await self.db.live_post_submit_reconciliation_requirements.insert_one(record)
+        await self.db.live_post_submit_reconciliation_requirements.insert_one(dict(record))  # copy: insert_one adds an ObjectId _id that breaks JSON responses
         return record

@@ -71,7 +71,7 @@ class LiveReadonlyServiceV2:
             "orders_allowed": False,
             "live_execution_enabled": False,
         }
-        await self.db.live_readonly_snapshots.insert_one(record)
+        await self.db.live_readonly_snapshots.insert_one(dict(record))  # copy: insert_one adds an ObjectId _id that breaks JSON responses
         return record
 
     async def latest_snapshot_status(self, user_id: str) -> dict[str, Any]:

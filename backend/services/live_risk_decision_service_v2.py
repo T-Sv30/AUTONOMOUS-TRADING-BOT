@@ -42,7 +42,7 @@ class LiveRiskDecisionServiceV2:
             "created_at": self.utc_now(),
             "version": "live_risk_decision_v2",
         }
-        await self.db.live_risk_decisions.insert_one(decision)
+        await self.db.live_risk_decisions.insert_one(dict(decision))  # copy: insert_one adds an ObjectId _id that breaks JSON responses
         return decision
 
     async def allow_basic_manual_order(

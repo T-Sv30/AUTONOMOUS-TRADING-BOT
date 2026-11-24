@@ -134,7 +134,7 @@ class LiveOrderStateServiceV2:
         payload_hash = self.sha256_payload(payload)
         transition_hash = hashlib.sha256(f"GENESIS:{payload_hash}".encode()).hexdigest()
         record = {**payload, "previous_hash": "GENESIS", "payload_hash": payload_hash, "transition_hash": transition_hash}
-        await self.db.live_order_transitions.insert_one(record)
+        await self.db.live_order_transitions.insert_one(dict(record))  # copy: insert_one adds an ObjectId _id that breaks JSON responses
         return record
 
     async def transition(
@@ -176,7 +176,7 @@ class LiveOrderStateServiceV2:
         previous_hash = latest["transition_hash"]
         transition_hash = hashlib.sha256(f"{previous_hash}:{payload_hash}".encode()).hexdigest()
         record = {**payload, "previous_hash": previous_hash, "payload_hash": payload_hash, "transition_hash": transition_hash}
-        await self.db.live_order_transitions.insert_one(record)
+        await self.db.live_order_transitions.insert_one(dict(record))  # copy: insert_one adds an ObjectId _id that breaks JSON responses
         return record
 
     async def transition_many(self, order_id: str, states: Iterable[str], *, reason: str, request_id: str = "", metadata: dict[str, Any] | None = None):

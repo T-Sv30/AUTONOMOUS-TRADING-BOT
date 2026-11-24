@@ -56,7 +56,7 @@ class LiveOrderAuditServiceV2:
             "audit_hash": audit_hash,
             "audit_version": "live_order_audit_v2",
         }
-        await self.db.live_order_audits.insert_one(chained)
+        await self.db.live_order_audits.insert_one(dict(chained))  # copy: insert_one adds an ObjectId _id that breaks JSON responses
         return chained
 
     async def verify_user_chain(self, user_id: str, limit: int = 1000) -> dict[str, Any]:

@@ -98,5 +98,5 @@ class LivePreSubmitSafetyServiceV2:
 
     async def create_halt(self, *, user_id: str | None, scope: str, reason: str, created_by: str = "system") -> dict[str, Any]:
         record = {"scope": scope, "user_id": user_id, "reason": reason, "active": True, "created_by": created_by, "created_at": self.utc_now().isoformat()}
-        await self.db.live_halts.insert_one(record)
+        await self.db.live_halts.insert_one(dict(record))  # copy: insert_one adds an ObjectId _id that breaks JSON responses
         return record
