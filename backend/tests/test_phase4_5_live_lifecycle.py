@@ -140,3 +140,21 @@ async def test_lifecycle_pre_submit_block_halts_order_when_active_halt_exists():
 
     assert result["allowed"] is False
     assert latest["state"] == LiveOrderState.HALTED.value
+
+
+@pytest.mark.asyncio
+async def test_hash_chain_survives_is_latest_flips_but_detects_edited_history():
+    db = FakeDB()
+    lifecycle = LiveManualOrderLifecycleServiceV2(db)
+    order = await lifecycle.begin(user_id="user-1", symbol="BTC-USD", side="BUY", notional_usd=5.0, base_units=None, client_order_id="client-chain")
+    live_order_id = order["order_id"]
+    await lifecycle.gate_checked(live_order_id, {"allowed": True})
+
+    assert (await lifecycle.states.verify_chain(live_order_id))["status"] == "ok"
+
+    first = next(doc for doc in db.live_order_transitions.docs if doc["order_id"] == live_order_id and doc["sequence"] == 1)
+    first["reason"] = "edited after the fact"
+
+    tampered = await lifecycle.states.verify_chain(live_order_id)
+    assert tampered["status"] == "tamper_detected"
+    assert {"index": 0, "type": "payload_hash_mismatch"} in tampered["issues"]

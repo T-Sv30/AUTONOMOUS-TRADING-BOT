@@ -193,6 +193,10 @@ class LiveOrderStateServiceV2:
         for index, record in enumerate(records):
             chain_fields = {"previous_hash", "payload_hash", "transition_hash"}
             payload = {key: value for key, value in record.items() if key not in chain_fields}
+            if "is_latest" in payload:
+                # Every record is hashed with is_latest=True at write time; the flag is a mutable
+                # index that later transitions flip to False, so verify against the written value.
+                payload["is_latest"] = True
             payload_hash = self.sha256_payload(payload)
             transition_hash = hashlib.sha256(f"{expected_previous}:{payload_hash}".encode()).hexdigest()
             if record.get("previous_hash") != expected_previous:

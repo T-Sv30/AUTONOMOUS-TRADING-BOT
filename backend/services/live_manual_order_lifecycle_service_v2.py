@@ -117,7 +117,10 @@ class LiveManualOrderLifecycleServiceV2:
     async def finalized_from_order(self, *, user_id: str, live_order_id: str, order: dict[str, Any], dry_run: bool) -> dict[str, Any]:
         status = str(order.get("status") or "acknowledged")
         if dry_run:
+            # Walk the normal fill path with dry-run reasons; the state machine has no
+            # acknowledged -> reconciliation_pending edge, and widening it would weaken live orders.
             await self.states.transition(order_id=live_order_id, next_state=LiveOrderState.ACKNOWLEDGED.value, reason="dry-run acknowledged", metadata={"order": order})
+            await self.states.transition(order_id=live_order_id, next_state=LiveOrderState.FILLED.value, reason="dry-run simulated fill, nothing sent to exchange", metadata={"order": order})
             await self.states.transition(order_id=live_order_id, next_state=LiveOrderState.RECONCILIATION_PENDING.value, reason="dry-run reconciliation simulated", metadata={"order": order})
             await self.states.transition(order_id=live_order_id, next_state=LiveOrderState.RECONCILED.value, reason="dry-run reconciled", metadata={"order": order})
             return {"required": False, "status": "dry_run_skipped"}
