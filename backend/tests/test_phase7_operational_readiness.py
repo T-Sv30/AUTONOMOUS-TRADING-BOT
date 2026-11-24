@@ -2,6 +2,7 @@ import pytest
 
 from services.mongo_indexes_v2 import MongoIndexServiceV2
 from services.operational_readiness_v2 import OperationalReadinessServiceV2
+from services.settings_v2 import SettingsV2
 
 
 class FakeCollection:
@@ -33,6 +34,14 @@ class FakeDB:
         ]:
             setattr(self, name, FakeCollection())
 
+    def __getattr__(self, name):
+        # Services gained collections after this fake was written; create them on demand.
+        if name.startswith("_"):
+            raise AttributeError(name)
+        collection = FakeCollection()
+        setattr(self, name, collection)
+        return collection
+
     async def command(self, command):
         if not self.ping_ok:
             raise RuntimeError("database down")
@@ -52,7 +61,10 @@ def test_operational_readiness_blocks_missing_critical_env(monkeypatch):
     monkeypatch.setenv("CORS_ORIGINS", "*")
     monkeypatch.setenv("DEBUG", "false")
 
-    result = OperationalReadinessServiceV2().validate_environment(strict=True)
+    # SettingsV2 validation refuses to load this environment at all, so build the
+    # unvalidated settings a misconfigured deployment would carry.
+    misconfigured = SettingsV2.model_construct(debug=False, jwt_secret="", mongo_url="", db_name="", cors_origins=["*"])
+    result = OperationalReadinessServiceV2().validate_environment(strict=True, settings=misconfigured)
 
     assert result["status"] == "blocked"
     failed_names = {check["name"] for check in result["checks"] if not check["passed"]}
@@ -73,7 +85,7 @@ def test_operational_readiness_paper_mode_ready(monkeypatch):
     monkeypatch.setenv("LIVE_TRADING_ENABLED", "false")
     monkeypatch.setenv("LIVE_EXECUTION_ADAPTER", "disabled")
 
-    result = OperationalReadinessServiceV2().validate_environment(strict=True)
+    result = OperationalReadinessServiceV2().validate_environment(strict=True, settings=SettingsV2.from_env())
 
     assert result["status"] == "ready"
     assert result["summary"]["failed_critical"] == 0
@@ -91,7 +103,7 @@ def test_operational_readiness_live_readonly_requires_credentials(monkeypatch):
     for key in ["COINBASE_EXCHANGE_API_KEY", "COINBASE_EXCHANGE_API_SECRET", "COINBASE_EXCHANGE_PASSPHRASE"]:
         monkeypatch.delenv(key, raising=False)
 
-    result = OperationalReadinessServiceV2().validate_environment(strict=True)
+    result = OperationalReadinessServiceV2().validate_environment(strict=True, settings=SettingsV2.from_env())
 
     assert result["status"] == "blocked"
     failed_names = {check["name"] for check in result["checks"] if not check["passed"]}
@@ -115,7 +127,7 @@ def test_operational_readiness_live_trading_requires_gates(monkeypatch):
     monkeypatch.setenv("COINBASE_EXCHANGE_API_SECRET", "secret")
     monkeypatch.setenv("COINBASE_EXCHANGE_PASSPHRASE", "pass")
 
-    result = OperationalReadinessServiceV2().validate_environment(strict=True)
+    result = OperationalReadinessServiceV2().validate_environment(strict=True, settings=SettingsV2.from_env())
 
     assert result["status"] == "ready"
     assert result["summary"]["failed_critical"] == 0

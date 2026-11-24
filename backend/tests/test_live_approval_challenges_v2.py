@@ -1,6 +1,6 @@
 import os
 import uuid
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 
 os.environ.setdefault("DEBUG", "True")
 os.environ.setdefault("JWT_SECRET", "test-secret-for-live-approval-challenges-more-than-32-chars")
@@ -28,6 +28,7 @@ async def cleanup(user_id: str | None = None, email: str | None = None) -> None:
         await db.auth_failures.delete_many({"email": email})
         await db.live_approval_challenges.delete_many({"user_id": user_id})
         await db.live_order_audits.delete_many({"user_id": user_id})
+        await db.live_readonly_reports.delete_many({"user_id": user_id})
 
 
 @pytest.mark.asyncio
@@ -134,6 +135,9 @@ async def test_non_dry_run_live_order_requires_valid_signed_challenge():
             )
             assert challenge.status_code == 200, challenge.text
             approval_token = challenge.json()["approval_token"]
+
+            # Pre-submit safety (added after this test) needs a fresh live-readonly reconciliation.
+            await db.live_readonly_reports.insert_one({"user_id": user_id, "checked_at": datetime.now(UTC).isoformat(), "status": "ok"})
 
             reached_route = await client.post(
                 "/api/live-trading/market-buy",

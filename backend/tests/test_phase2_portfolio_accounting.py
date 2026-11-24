@@ -63,6 +63,14 @@ class FakeDB:
         self.risk_metrics = FakeCollection()
         self.bot_configs = FakeCollection()
 
+    def __getattr__(self, name):
+        # Services gained collections after this fake was written; create them on demand.
+        if name.startswith("_"):
+            raise AttributeError(name)
+        collection = FakeCollection()
+        setattr(self, name, collection)
+        return collection
+
 
 @pytest.mark.asyncio
 async def test_buy_and_sell_accounting_includes_fees_and_writes_risk_snapshot():
@@ -81,9 +89,11 @@ async def test_buy_and_sell_accounting_includes_fees_and_writes_risk_snapshot():
 
     state = await db.portfolio_state.find_one({"user_id": user_id})
     position = await db.positions_v2.find_one({"user_id": user_id, "symbol": "BTC-USD"})
-    assert state["cash_balance"] == 9899.0
-    assert position["notional_usd"] == 101.0
-    assert position["avg_price"] == 101.0
+    # notional_usd is fee-inclusive (paper fills buy base units with notional - fee),
+    # so cash and cost basis move by the notional only (behavior since f42585a).
+    assert state["cash_balance"] == 9900.0
+    assert position["notional_usd"] == 100.0
+    assert position["avg_price"] == 100.0
 
     result = await service.record_sell_fill(
         user_id=user_id,
@@ -94,11 +104,11 @@ async def test_buy_and_sell_accounting_includes_fees_and_writes_risk_snapshot():
     )
 
     state = await db.portfolio_state.find_one({"user_id": user_id})
-    assert state["cash_balance"] == 10008.0
-    assert result["realized_pnl"] == 8.0
+    assert state["cash_balance"] == 10009.0
+    assert result["realized_pnl"] == 9.0
 
     snapshot = await service.update_risk_snapshot(user_id)
-    assert snapshot["total_equity"] == 10008.0
+    assert snapshot["total_equity"] == 10009.0
     assert len(db.risk_metrics.docs) == 1
 
 

@@ -86,7 +86,9 @@ def test_backtest_risk_halt_triggers_on_drawdown():
         fee_bps=0,
         slippage_bps=0,
         max_position_pct=1.0,
-        max_drawdown_pct=0.02,
+        # Two -1% bars before the crossover exit give a 1.99% drawdown (1 - 0.99**2),
+        # so the threshold must sit below that for the halt to trigger.
+        max_drawdown_pct=0.015,
     )
     result = service.run_moving_average_backtest(make_reversal_candles(), config)
 

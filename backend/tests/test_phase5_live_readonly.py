@@ -99,7 +99,7 @@ class FakeReadonlyAdapter:
                 {"currency": "USD", "balance": 100.0, "available": 100.0, "hold": 0.0},
             ],
             "tickers": {"BTC-USD": {"price": 100.0}},
-            "timestamp": "2026-01-01T00:00:00+00:00",
+            "timestamp": datetime.now(UTC).isoformat(),
         }
 
     async def get_orders(self, status="all", limit=100):

@@ -88,9 +88,12 @@ async def test_explicit_live_execute_scope_reaches_live_gate_for_non_dry_run_ord
                 json={"symbol": "BTC-USD", "notional_usd": 5.0, "dry_run": False},
             )
 
-        assert response.status_code != 403
+        # The scope check passes; the order is then stopped by the signed approval
+        # challenge (added after this test), which also answers 403.
         body = response.json()
-        assert body.get("success") is False or body.get("allowed") is False or "error" in body
+        assert "Missing required scope" not in str(body)
+        assert response.status_code == 403
+        assert "approval" in body["error"]["message"].lower()
     finally:
         await cleanup_user(user_id, email)
 

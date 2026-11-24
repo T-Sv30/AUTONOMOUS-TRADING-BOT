@@ -41,6 +41,11 @@ class FakeCollection:
     async def insert_one(self, doc):
         self.docs.append(dict(doc))
 
+    async def update_many(self, query, update):
+        for doc in self.docs:
+            if all(doc.get(k) == v for k, v in query.items()):
+                doc.update(update.get("$set", {}))
+
     async def update_one(self, query, update, upsert=False):
         doc = None
         for existing in self.docs:
@@ -67,6 +72,14 @@ class FakeDB:
         self.bot_configs = FakeCollection()
         self.live_order_audits = FakeCollection()
         self.live_approval_challenges = FakeCollection()
+
+    def __getattr__(self, name):
+        # Services gained collections after this fake was written; create them on demand.
+        if name.startswith("_"):
+            raise AttributeError(name)
+        collection = FakeCollection()
+        setattr(self, name, collection)
+        return collection
 
 
 class FakeLiveAdapter:

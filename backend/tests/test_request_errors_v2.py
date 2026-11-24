@@ -52,15 +52,16 @@ async def test_http_exception_uses_standard_error_envelope_and_request_id():
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
         response = await client.get("/api/dashboard/stats", headers={REQUEST_ID_HEADER: request_id})
 
-    assert response.status_code == 403
+    # FastAPI's HTTPBearer returns 401 (not 403) for a missing token since 0.12x.
+    assert response.status_code == 401
     assert response.headers[REQUEST_ID_HEADER] == request_id
     payload = response.json()
     assert payload == {
         "error": {
-            "code": "FORBIDDEN",
+            "code": "UNAUTHORIZED",
             "message": "Not authenticated",
             "request_id": request_id,
-            "details": {"status_code": 403},
+            "details": {"status_code": 401},
         }
     }
 
