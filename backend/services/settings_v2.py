@@ -11,6 +11,19 @@ from services.market_data_service import resolve_market_data_source
 logger = logging.getLogger(__name__)
 
 
+KILL_SWITCH_OFF_VALUES = frozenset({"0", "false", "no", "off"})
+
+
+def parse_kill_switch(value: str | None) -> bool:
+    """Fail closed: the live order kill switch is on unless explicitly set false.
+
+    Unset, empty and malformed values all mean on. Only 0/false/no/off turn it off.
+    """
+    if value is None:
+        return True
+    return value.strip().lower() not in KILL_SWITCH_OFF_VALUES
+
+
 class RuntimeRole(str, Enum):
     API = "api"
     WORKER = "worker"
@@ -100,7 +113,7 @@ class SettingsV2(BaseModel):
             live_max_order_notional_usd=float(os.getenv("LIVE_MAX_ORDER_NOTIONAL_USD", "25") or 25),
             live_manual_approval_required=cls.env_bool("LIVE_MANUAL_APPROVAL_REQUIRED", True),
             live_approval_token=os.getenv("LIVE_APPROVAL_TOKEN", ""),
-            coinbase_live_order_kill_switch=cls.env_bool("COINBASE_LIVE_ORDER_KILL_SWITCH", True),
+            coinbase_live_order_kill_switch=parse_kill_switch(os.getenv("COINBASE_LIVE_ORDER_KILL_SWITCH")),
         )
 
     @field_validator("cors_origins")

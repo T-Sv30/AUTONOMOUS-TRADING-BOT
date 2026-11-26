@@ -3,6 +3,7 @@ import os
 from typing import Any
 
 from services.coinbase_readonly_adapter_v2 import CoinbaseReadonlyAdapterV2, CoinbaseReadonlyError
+from services.settings_v2 import parse_kill_switch
 
 
 class CoinbaseLiveExecutionError(RuntimeError):
@@ -20,16 +21,10 @@ class CoinbaseLiveExecutionAdapterV2(CoinbaseReadonlyAdapterV2):
     adapter_name = "coinbase_exchange_v2"
     kill_switch_env = "COINBASE_LIVE_ORDER_KILL_SWITCH"
 
-    @staticmethod
-    def env_bool(name: str, default: bool = False) -> bool:
-        value = os.getenv(name)
-        if value is None:
-            return default
-        return value.strip().lower() in {"1", "true", "yes", "on"}
-
     @classmethod
     def live_order_kill_switch_enabled(cls) -> bool:
-        return cls.env_bool(cls.kill_switch_env, False)
+        # Same parsing as SettingsV2.coinbase_live_order_kill_switch: on unless explicitly false.
+        return parse_kill_switch(os.getenv(cls.kill_switch_env))
 
     @classmethod
     def assert_live_orders_not_killed(cls) -> None:
