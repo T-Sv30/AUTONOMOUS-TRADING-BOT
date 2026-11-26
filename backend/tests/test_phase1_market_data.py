@@ -1,6 +1,14 @@
+from datetime import UTC, datetime, timedelta
+
 import pytest
 
 from services.market_data_service import MarketDataService, MarketDataUnavailable
+
+NOON = datetime(2026, 11, 26, 12, 0, tzinfo=UTC)
+
+
+def sim(at):
+    return MarketDataService(source="simulated", seed="s", clock=lambda: at)
 
 
 class FakeCursor:
@@ -55,8 +63,8 @@ def test_timeframe_granularity_validation():
 
 @pytest.mark.asyncio
 async def test_seeded_simulation_candles_are_deterministic_for_prices():
-    first = MarketDataService(source="simulated", seed="same-seed")
-    second = MarketDataService(source="simulated", seed="same-seed")
+    first = MarketDataService(source="simulated", seed="same-seed", clock=lambda: NOON)
+    second = MarketDataService(source="simulated", seed="same-seed", clock=lambda: NOON)
 
     first_candles = await first.get_candles("BTC-USD", timeframe="5m", periods=5)
     second_candles = await second.get_candles("BTC-USD", timeframe="5m", periods=5)
@@ -102,3 +110,39 @@ async def test_stored_candles_requires_database_handle():
 def test_market_data_service_reads_source_from_env(monkeypatch):
     monkeypatch.setenv("MARKET_DATA_SOURCE", "replay")
     assert MarketDataService().source == "replay"
+
+
+@pytest.mark.asyncio
+async def test_simulated_ticker_moves_over_time():
+    first = await sim(NOON).get_current_price("BTC-USD")
+    later = await sim(NOON + timedelta(hours=1)).get_current_price("BTC-USD")
+    assert first["price"] != later["price"]
+
+
+@pytest.mark.asyncio
+async def test_simulation_is_deterministic_for_same_instant():
+    a = await sim(NOON).get_candles("BTC-USD", periods=50)
+    b = await sim(NOON).get_candles("BTC-USD", periods=50)
+    assert [c["close"] for c in a] == [c["close"] for c in b]
+
+
+@pytest.mark.asyncio
+async def test_simulated_ticker_agrees_with_last_candle():
+    svc = sim(NOON)
+    ticker = await svc.get_current_price("BTC-USD")
+    last = (await svc.get_candles("BTC-USD", periods=5))[-1]
+    assert abs(ticker["price"] - last["close"]) / last["close"] < 0.005
+
+
+@pytest.mark.asyncio
+async def test_overlapping_windows_share_candles():
+    a = await sim(NOON).get_candles("BTC-USD", periods=60)
+    b = await sim(NOON + timedelta(minutes=10)).get_candles("BTC-USD", periods=60)
+    shared = {c["open_time"]: c["close"] for c in a}
+    assert all(shared[c["open_time"]] == c["close"] for c in b if c["open_time"] in shared)
+
+
+@pytest.mark.asyncio
+async def test_simulated_ticker_has_bid_below_ask():
+    t = await sim(NOON).get_current_price("BTC-USD")
+    assert t["bid"] < t["price"] < t["ask"]
