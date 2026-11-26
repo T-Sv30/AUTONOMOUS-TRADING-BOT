@@ -1,6 +1,7 @@
 import pytest
 from pymongo.errors import DuplicateKeyError
 
+from api_routes_v2 import BotConfig
 from services.execution_control_v2 import ExecutionControlV2
 from services.execution_service_v2 import ExecutionServiceV2
 from services.risk_guard_v2 import RiskGuardV2
@@ -105,26 +106,26 @@ class FakeDB:
         self.trades_v2 = FakeCollection()
 
 
-def test_risk_guard_enforces_capital_floor_and_position_limits():
-    guard = RiskGuardV2(max_position_notional=100, max_total_exposure_pct=0.30, capital_floor_pct=0.97)
-    metrics = guard.portfolio_metrics(
-        {"cash_balance": 9600.0, "equity_high": 10000.0, "daily_start_equity": 10000.0},
-        [],
-        {},
-    )
+def test_oversized_buy_is_clipped_not_rejected():
+    guard = RiskGuardV2(max_position_notional=100)
+    metrics = guard.portfolio_metrics({"cash_balance": 10000.0}, [], {})
+    result = guard.can_open_position(metrics, [], proposed_notional=140.0)
+    assert result == {"allowed": True, "reason": "ok", "notional": 100.0}
 
-    kill = guard.should_kill_switch(metrics)
-    assert kill["triggered"] is True
-    assert "capital floor" in kill["reason"]
 
-    good_metrics = guard.portfolio_metrics(
-        {"cash_balance": 10000.0, "equity_high": 10000.0, "daily_start_equity": 10000.0},
-        [],
-        {},
-    )
-    blocked = guard.can_open_position(good_metrics, [], 150.0)
-    assert blocked["allowed"] is False
-    assert "notional" in blocked["reason"]
+def test_drawdown_limit_is_the_only_equity_halt():
+    guard = RiskGuardV2(max_drawdown_pct=0.05)
+    m = guard.portfolio_metrics({"cash_balance": 9650.0, "equity_high": 10000.0, "daily_start_equity": 9650.0}, [], {})
+    assert guard.should_kill_switch(m)["triggered"] is False  # 3.5% down: the old floor halted here
+    m = guard.portfolio_metrics({"cash_balance": 9500.0, "equity_high": 10000.0, "daily_start_equity": 9500.0}, [], {})
+    assert "drawdown" in guard.should_kill_switch(m)["reason"]
+
+
+def test_legacy_capital_floor_is_accepted_and_ignored():
+    guard = RiskGuardV2.from_config({"capital_floor": 0.99, "max_drawdown_pct": 0.05})
+    m = guard.portfolio_metrics({"cash_balance": 9800.0, "equity_high": 10000.0, "daily_start_equity": 9800.0}, [], {})
+    assert guard.should_kill_switch(m)["triggered"] is False  # 2% down
+    assert BotConfig(capital_floor=0.97).capital_floor == 0.97
 
 
 def test_trading_modes_are_explicit_and_gate_execution():

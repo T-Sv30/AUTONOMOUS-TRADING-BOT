@@ -329,3 +329,30 @@ async def test_duplicate_trade_insert_records_no_fill(monkeypatch):
 
     assert db.positions_v2.docs == []
     assert db.ledger_entries.docs == []
+
+
+@pytest.mark.asyncio
+async def test_oversized_buy_plan_is_clipped_to_the_cap_and_fills(monkeypatch):
+    monkeypatch.setenv("TRADING_MODE", "paper")
+    db = FakeDB()
+    db.bot_configs.docs.append({"user_id": "u1", "is_active": True, "symbols": ["BTC-USD"]})
+    engine = BotEngine(db, market=MarketDataService(db=db, source="simulated", clock=lambda: NOON))
+    monkeypatch.setattr(
+        engine.planner,
+        "build_plan",
+        lambda symbol, prices, has_position, base_notional=100.0: {"symbol": symbol, "action": "BUY", "selected": {"strategy": "trend"}, "notional": 140.0},
+    )
+    received = []
+    real_execute_buy = engine.execute_buy
+
+    async def spy(user_id, symbol, notional, context):
+        received.append(notional)
+        return await real_execute_buy(user_id, symbol, notional, context)
+
+    monkeypatch.setattr(engine, "execute_buy", spy)
+    await engine.cycle("u1")
+
+    assert received == [100.0]
+    filled = [t for t in db.trades_v2.docs if t["status"] == "filled"]
+    assert len(filled) == 1
+    assert filled[0]["notional_usd"] == pytest.approx(100.0, rel=0.01)
