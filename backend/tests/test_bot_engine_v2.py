@@ -228,6 +228,25 @@ async def test_cycle_rolls_daily_start_on_the_market_clock(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_execute_buy_snapshots_on_the_market_clock(monkeypatch):
+    monkeypatch.setenv("TRADING_MODE", "paper")
+    db = FakeDB()
+    scripted_day = datetime(2026, 1, 15, 0, 0, 5, tzinfo=UTC)
+    engine = BotEngine(db, market=MarketDataService(db=db, source="simulated", clock=lambda: scripted_day))
+    context = {
+        "action": "BUY",
+        "selected": {"strategy": "trend"},
+        "notional": 50.0,
+        "timeframe": "1m",
+        "decision_candle_close": scripted_day.isoformat(),
+    }
+    await engine.execute_buy("u1", "BTC-USD", 50.0, context)
+    assert db.positions_v2.docs
+    state = await db.portfolio_state.find_one({"user_id": "u1"})
+    assert state["daily_start_date"] == "2026-01-15"
+
+
+@pytest.mark.asyncio
 async def test_paper_fills_use_the_engine_market():
     market = MarketDataService(db=FakeDB(), source="simulated", clock=lambda: NOON)
     engine = BotEngine(FakeDB(), market=market)
