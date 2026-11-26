@@ -49,6 +49,10 @@ class BotEngine:
         self.running = False
         await self.market.close()
 
+    def _now(self) -> datetime:
+        clock = getattr(self.market, "clock", None)
+        return clock() if clock else datetime.now(UTC)
+
     async def cycle(self, user_id: str):
         config = await self.db.bot_configs.find_one({"user_id": user_id})
         if not config or not config.get("is_active"):
@@ -58,7 +62,7 @@ class BotEngine:
         await self.portfolio.ensure_account_state(user_id)
         symbols = config.get("symbols", ["BTC-USD"])
         price_map = await self.get_price_map(user_id, symbols)
-        snapshot = await self.portfolio.update_risk_snapshot(user_id, price_map)
+        snapshot = await self.portfolio.update_risk_snapshot(user_id, price_map, now=self._now())
         state = await self.db.portfolio_state.find_one({"user_id": user_id}) or {}
         positions = await self.portfolio.get_positions(user_id)
         metrics = risk.portfolio_metrics(state, positions, price_map)
