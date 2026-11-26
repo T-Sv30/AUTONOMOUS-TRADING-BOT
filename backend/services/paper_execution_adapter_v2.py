@@ -1,10 +1,13 @@
 import hashlib
+import logging
 import os
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from typing import Any
 
 from services.market_data_service import MarketDataService, MarketDataUnavailable
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -56,6 +59,13 @@ class PaperExecutionAdapterV2:
                 return int(os.getenv(name, default))
             except (TypeError, ValueError):
                 return default
+
+        for removed in ("PAPER_BUY_SLIPPAGE_BPS", "PAPER_SELL_SLIPPAGE_BPS"):
+            if os.getenv(removed) is not None:
+                logger.warning(
+                    "%s was removed and is ignored: paper fills now price at the bid and ask. Use PAPER_EXTRA_SLIPPAGE_BPS instead.",
+                    removed,
+                )
 
         return PaperExecutionConfig(
             fee_bps=env_float("PAPER_FEE_BPS", 10.0),
