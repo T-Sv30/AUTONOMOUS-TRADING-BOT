@@ -171,8 +171,8 @@ class MarketDataService:
                 return {
                     "symbol": symbol,
                     "price": float(price),
-                    "bid": float(data.get("bid") or price),
-                    "ask": float(data.get("ask") or price),
+                    "bid": float(data["bid"]) if data.get("bid") else None,
+                    "ask": float(data["ask"]) if data.get("ask") else None,
                     "volume": float(data.get("volume", 0)),
                     "timestamp": self.clock().isoformat(),
                     "simulation": False,

@@ -10,8 +10,8 @@ from services.market_data_service import MarketDataService, MarketDataUnavailabl
 @dataclass
 class PaperExecutionConfig:
     fee_bps: float = 10.0
-    buy_slippage_bps: float = 8.0
-    sell_slippage_bps: float = 8.0
+    extra_slippage_bps: float = 0.0
+    fallback_spread_bps: float = 2.0
     min_notional_usd: float = 5.0
     min_base_units: float = 0.00000001
     quote_precision: int = 8
@@ -26,8 +26,8 @@ class PaperExecutionAdapterV2:
     """Deterministic paper execution adapter.
 
     This adapter models market-order lifecycle behavior without live exchange
-    access. It uses MarketDataService for the reference price, applies side-
-    specific slippage and fees, enforces min-size/precision constraints, and can
+    access. It uses MarketDataService for the quote, fills buys at the ask and
+    sells at the bid (plus optional extra slippage), applies fees, enforces min-size/precision constraints, and can
     deterministically partial-fill larger paper orders.
     """
 
@@ -59,8 +59,8 @@ class PaperExecutionAdapterV2:
 
         return PaperExecutionConfig(
             fee_bps=env_float("PAPER_FEE_BPS", 10.0),
-            buy_slippage_bps=env_float("PAPER_BUY_SLIPPAGE_BPS", 8.0),
-            sell_slippage_bps=env_float("PAPER_SELL_SLIPPAGE_BPS", 8.0),
+            extra_slippage_bps=env_float("PAPER_EXTRA_SLIPPAGE_BPS", 0.0),
+            fallback_spread_bps=env_float("PAPER_FALLBACK_SPREAD_BPS", 2.0),
             min_notional_usd=env_float("PAPER_MIN_NOTIONAL_USD", 5.0),
             partial_fill_threshold_usd=env_float("PAPER_PARTIAL_FILL_THRESHOLD_USD", 250.0),
             partial_fill_ratio=env_float("PAPER_PARTIAL_FILL_RATIO", 0.65),
@@ -113,7 +113,7 @@ class PaperExecutionAdapterV2:
             return max(0.0, min(1.0, self.config.partial_fill_ratio))
         return 1.0
 
-    async def _reference_price(self, symbol: str) -> float:
+    async def _reference_quote(self, symbol: str) -> dict[str, Any]:
         try:
             current = await self.market_data.get_current_price(symbol)
         except MarketDataUnavailable:
@@ -123,7 +123,11 @@ class PaperExecutionAdapterV2:
         price = float(current.get("price", 0.0) or 0.0)
         if price <= 0:
             raise MarketDataUnavailable(f"Paper execution received invalid reference price for {symbol}")
-        return price
+        bid, ask = current.get("bid"), current.get("ask")
+        if bid is not None and ask is not None and 0 < float(bid) < float(ask):
+            return {"price": price, "bid": float(bid), "ask": float(ask), "price_basis": "quote"}
+        half_spread = self.config.fallback_spread_bps / 2 / 10000.0
+        return {"price": price, "bid": price * (1 - half_spread), "ask": price * (1 + half_spread), "price_basis": "synthetic_spread"}
 
     async def place_market_buy(self, symbol: str, notional_usd: float, client_order_id: str | None = None) -> dict[str, Any]:
         requested_notional = round(float(notional_usd), self.config.quote_precision)
@@ -134,15 +138,16 @@ class PaperExecutionAdapterV2:
             return self._reject(prefix="buy", symbol=symbol, client_order_id=client_order_id, reason="notional below minimum", requested=requested)
 
         try:
-            reference_price = await self._reference_price(symbol)
+            quote = await self._reference_quote(symbol)
         except MarketDataUnavailable as exc:
             return self._reject(prefix="buy", symbol=symbol, client_order_id=client_order_id, reason=str(exc), requested=requested)
 
+        reference_price = quote["price"]
         fill_ratio = self._partial_fill_ratio(requested_notional)
         filled_notional = requested_notional * fill_ratio
         fee_usd = round(filled_notional * (self.config.fee_bps / 10000.0), self.config.quote_precision)
         spendable = max(0.0, filled_notional - fee_usd)
-        filled_price = reference_price * (1 + self.config.buy_slippage_bps / 10000.0)
+        filled_price = quote["ask"] * (1 + self.config.extra_slippage_bps / 10000.0)
         base_units = round(spendable / filled_price if filled_price else 0.0, self.config.base_precision)
         status = "filled" if fill_ratio >= 1.0 else "partially_filled"
         success = base_units >= self.config.min_base_units
@@ -161,7 +166,8 @@ class PaperExecutionAdapterV2:
             "requested_notional_usd": requested_notional,
             "unfilled_notional_usd": round(requested_notional - filled_notional, self.config.quote_precision),
             "fee_usd": fee_usd,
-            "slippage_bps": self.config.buy_slippage_bps,
+            "price_basis": quote["price_basis"],
+            "slippage_bps": self.config.extra_slippage_bps,
             "fill_ratio": round(fill_ratio, 8),
             "simulation": True,
             "paper_execution": True,
@@ -184,14 +190,15 @@ class PaperExecutionAdapterV2:
             return self._reject(prefix="sell", symbol=symbol, client_order_id=client_order_id, reason="base units below minimum", requested=requested)
 
         try:
-            reference_price = await self._reference_price(symbol)
+            quote = await self._reference_quote(symbol)
         except MarketDataUnavailable as exc:
             return self._reject(prefix="sell", symbol=symbol, client_order_id=client_order_id, reason=str(exc), requested=requested)
 
+        reference_price = quote["price"]
         estimated_notional = requested_units * reference_price
         fill_ratio = self._partial_fill_ratio(estimated_notional)
         filled_units = round(requested_units * fill_ratio, self.config.base_precision)
-        filled_price = reference_price * (1 - self.config.sell_slippage_bps / 10000.0)
+        filled_price = quote["bid"] * (1 - self.config.extra_slippage_bps / 10000.0)
         gross_notional = filled_units * filled_price
         fee_usd = round(gross_notional * (self.config.fee_bps / 10000.0), self.config.quote_precision)
         net_notional = round(max(0.0, gross_notional - fee_usd), self.config.quote_precision)
@@ -210,7 +217,8 @@ class PaperExecutionAdapterV2:
             "notional_usd": net_notional,
             "gross_notional_usd": round(gross_notional, self.config.quote_precision),
             "fee_usd": fee_usd,
-            "slippage_bps": self.config.sell_slippage_bps,
+            "price_basis": quote["price_basis"],
+            "slippage_bps": self.config.extra_slippage_bps,
             "fill_ratio": round(fill_ratio, 8),
             "simulation": True,
             "paper_execution": True,
