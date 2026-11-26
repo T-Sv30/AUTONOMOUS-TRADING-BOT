@@ -10,23 +10,37 @@
 
 **Spec:** `docs/superpowers/specs/2026-11-24-premium-upgrade-design.md`, plus the owner's "Autonomous Trading Bot — Full-Potential Roadmap (1)" (Nov 25, 2026), P0 table and "Decided" notes. The decisions this plan relies on are copied into Global Constraints.
 
+**Status:** Approved by owner on 2026-11-26 with six changes, which are folded in below. Execution is subagent-driven.
+
+## Process: prove each test fails first, in CI
+
+The phone cannot run the backend suite, so CI is the only test runner.
+
+1. Commit the new or changed tests alone. Push, then wait for that commit's CI run to finish with `gh run watch <id> --exit-status`.
+2. Confirm with `gh run view <id> --log-failed` that the new tests fail for the reason the task states, and that nothing else broke.
+3. Commit the fix. Its message ends with `Failing first: <run URL>`. Push and wait for a green run.
+4. Never push the fix while the test-only run is in progress. CI's concurrency group cancels the earlier run, which would erase the proof.
+5. The task reviewer opens the failing run, checks the failure reason, and checks that the fix commit's run is green.
+
+The pull request is a draft that stacks on PR #1. Do not merge it. If PR #1 is squash-merged, rebase with `git rebase --onto main feat/m1-foundation feat/m15a-paper-trading`.
+
 ## Global Constraints
 
 - Branch from `main` after PR #1 merges. If PR #1 was squash-merged, run `git rebase --onto origin/main feat/m1-foundation feat/m15a-paper-trading`.
 - Scope is P0-1, 3, 4, 9, 13, 14, 15 and 16 only. The other 14 P0 bugs belong to M1.5b.
 - Each fix starts with a failing test that reproduces the bug. Commit the test with the fix.
-- `MARKET_DATA_SOURCE` takes exactly `live`, `simulated` or `replay`. It replaces `SIMULATION_MODE`.
+- `MARKET_DATA_SOURCE` takes exactly `live`, `simulated` or `replay`. It replaces `SIMULATION_MODE`. When only `SIMULATION_MODE` is set, true maps to `simulated` and false maps to `live`, with a deprecation warning. `MARKET_DATA_SOURCE` wins when both are set.
 - `.env.example` sets `MARKET_DATA_SOURCE=live`. The CI compose job sets it to `simulated`, because it copies `.env.example`.
 - Tests and CI never call Coinbase. They use `simulated`.
 - Store every candle the bot sees, so a paper week can be replayed.
-- Paper fills price from the exchange's current bid and ask, not last trade plus a fixed allowance.
+- Paper fills price from the exchange's current bid and ask, not last trade plus a fixed allowance. Any extra slippage is a small optional setting that defaults to 0. Simulated mode uses a synthetic spread. Quotes stay behind the market-data interface, so M3's ccxt adapter can supply them.
 - Do not weaken the kill switch, the live gate or any pre-submit check. Do not touch the live adapters.
 - CI on GitHub (Python 3.12) is the source of truth. The owner's phone cannot run the backend suite.
 
 ## Review Focus
 
 1. **Exchange unreachable in live mode.** One symbol's candles fail. The bot should skip that symbol, alert, and still process the others. Test in Task 4.
-2. **Old `.env` files.** `SIMULATION_MODE=True` is set and `MARKET_DATA_SOURCE` is not. Settings should load, log a warning naming `MARKET_DATA_SOURCE`, and use `live`. Test in Task 1.
+2. **Old `.env` files.** `SIMULATION_MODE=True` is set and `MARKET_DATA_SOURCE` is not. Settings should load, log a deprecation warning naming `MARKET_DATA_SOURCE`, and use `simulated`. Test in Task 1.
 3. **Typo in the setting.** `MARKET_DATA_SOURCE=sim` should fail at startup with a message listing the allowed values. Test in Task 1.
 4. **Bot restarted days later.** Daily start equity should roll to the current equity, not trip a "daily loss" halt for losses from earlier days. Test in Task 7.
 5. **Dropping the open candle shortens history.** The planner asks for 120 candles and should still get 120 closed ones. Test in Task 3.
@@ -46,8 +60,9 @@
 
 **Interfaces:**
 - Produces: `MARKET_DATA_SOURCES = ("live", "simulated", "replay")` and `parse_market_data_source(value: str | None) -> str` in `market_data_service.py`. An unset value returns `"live"`. Any other value raises `ValueError` listing the three allowed values.
-- Produces: `MarketDataService(db=None, source: str | None = None, seed=None, clock=None, session_factory=None, timeout_seconds: float | None = None)`. `source=None` reads `MARKET_DATA_SOURCE`. The attribute `self.source` replaces `self.simulation_mode`. `clock` and `session_factory` are used in Tasks 2 and 3.
-- Produces: `SettingsV2.market_data_source: str`, validated through `parse_market_data_source`. It replaces `simulation_mode`.
+- Produces: `MarketDataService(db=None, source: str | None = None, seed=None, clock=None, session_factory=None, timeout_seconds: float | None = None)`. `source=None` resolves through `resolve_market_data_source()`. The attribute `self.source` replaces `self.simulation_mode`. `clock` and `session_factory` are used in Tasks 2 and 3.
+- Produces: `resolve_market_data_source(environ=os.environ) -> str` in `market_data_service.py`. If `MARKET_DATA_SOURCE` is set, it returns `parse_market_data_source` of it. Otherwise, if `SIMULATION_MODE` is set, it logs a deprecation warning and maps true (`1`, `true`, `yes`, `on`) to `simulated` and anything else to `live`. Otherwise it returns `live`. Settings and the market service both call it, so there is one rule.
+- Produces: `SettingsV2.market_data_source: str`, set from `resolve_market_data_source()`. It replaces `simulation_mode`.
 
 - [ ] **Step 1: Write failing tests**
 
@@ -63,11 +78,17 @@ def test_market_data_source_rejects_unknown_value(monkeypatch):
     with pytest.raises(ValueError, match="live, simulated, replay"):
         SettingsV2.from_env()
 
-def test_legacy_simulation_mode_is_ignored_with_warning(monkeypatch, caplog):
+@pytest.mark.parametrize("legacy,expected", [("True", "simulated"), ("false", "live")])
+def test_legacy_simulation_mode_maps_with_deprecation_warning(monkeypatch, caplog, legacy, expected):
     monkeypatch.delenv("MARKET_DATA_SOURCE", raising=False)
+    monkeypatch.setenv("SIMULATION_MODE", legacy)
+    assert SettingsV2.from_env().market_data_source == expected
+    assert "deprecated" in caplog.text and "MARKET_DATA_SOURCE" in caplog.text
+
+def test_market_data_source_wins_over_legacy(monkeypatch):
     monkeypatch.setenv("SIMULATION_MODE", "True")
+    monkeypatch.setenv("MARKET_DATA_SOURCE", "live")
     assert SettingsV2.from_env().market_data_source == "live"
-    assert "MARKET_DATA_SOURCE" in caplog.text
 
 # test_phase1_market_data.py
 def test_market_data_service_reads_source_from_env(monkeypatch):
@@ -80,12 +101,12 @@ Use the same env setup as the existing tests in `test_settings_v2.py`, which alr
 - [ ] **Step 2: Run them and confirm they fail**
 
 Run: `cd backend && python -m pytest tests/test_settings_v2.py tests/test_phase1_market_data.py -v`
-Expected: the four new tests FAIL with an `AttributeError` on `market_data_source` or `source`.
+Expected: the new tests FAIL with an `AttributeError` on `market_data_source` or `source`.
 
 - [ ] **Step 3: Implement**
 
 - Add the constants and `parse_market_data_source` to `market_data_service.py`. Change the constructor to the signature above. Every `if self.simulation_mode:` becomes `if self.source == "simulated":`.
-- In `SettingsV2`, replace `simulation_mode` with `market_data_source`. In `from_env`, log a warning when `SIMULATION_MODE` is set and `MARKET_DATA_SOURCE` is not. Update `redacted_report` and `runtime_config.SIMULATION_MODE` (rename to `MARKET_DATA_SOURCE`).
+- In `SettingsV2`, replace `simulation_mode` with `market_data_source`. `from_env` calls `resolve_market_data_source()`. Update `redacted_report` and `runtime_config.SIMULATION_MODE` (rename to `MARKET_DATA_SOURCE`).
 - In `operational_readiness_v2.py`, the `paper_mode_simulation` check becomes `market_data_source_live`. It passes when the source is `live` and warns otherwise, with the message "Paper results only reflect the market when MARKET_DATA_SOURCE=live."
 - At the top of `backend/tests/conftest.py`, add `os.environ.setdefault("MARKET_DATA_SOURCE", "simulated")`. In the six listed test files, replace `SIMULATION_MODE` with `MARKET_DATA_SOURCE` and the value `simulated`. Replace `simulation_mode=True` with `source="simulated"` in `test_phase1_market_data.py`.
 - In `ci.yml`, change the job env to `MARKET_DATA_SOURCE: simulated`. In compose-smoke, after `cp .env.example .env`, add `sed -i 's/^MARKET_DATA_SOURCE=.*/MARKET_DATA_SOURCE=simulated/' .env`.
@@ -94,7 +115,7 @@ Expected: the four new tests FAIL with an `AttributeError` on `market_data_sourc
 - [ ] **Step 4: Run the full backend suite**
 
 Run: `cd backend && python -m pytest tests -q`
-Expected: all tests pass, including the four new ones. `grep -rn SIMULATION_MODE backend .github .env.example docs README.md` finds only the warning in `settings_v2.py`.
+Expected: all tests pass. `grep -rn SIMULATION_MODE backend .github .env.example docs README.md` finds only `resolve_market_data_source`, its tests, and one README line saying the variable is deprecated.
 
 - [ ] **Step 5: Commit**
 
@@ -245,6 +266,7 @@ git commit -m "fix(market-data): shared session with timeout, closed candles onl
 - Consumes: `MarketDataService(db=..., source=...)` and `close()` from Tasks 1 and 3.
 - Produces: `BotEngine.__init__(self, db, market: MarketDataService | None = None)`. The default is `MarketDataService(db=db)`. Tasks 6 and 11 inject a simulated, clocked instance.
 - Produces: `ExecutionServiceV2(trading_service: TradingServiceV2 | None = None)`. `BotEngine` builds `ExecutionServiceV2(TradingServiceV2(PaperExecutionAdapterV2(market_data=self.market)))`, so decisions and paper fills read the same prices through one session.
+- Produces: `persist_candles(candles)` writes only candles newer than the latest stored `open_time` for that symbol, exchange and timeframe. It sends them in one `bulk_write([...UpdateOne(filter, {"$set": candle}, upsert=True)], ordered=False)` and does nothing when no candle is new. The filter keys are the same as today.
 - Produces: with `source="replay"`, `get_candles` returns `get_stored_candles(symbol, timeframe, periods)` and the ticker is the last stored close. Both raise `MarketDataUnavailable` when nothing is stored. A time-travelling replay clock is left for the M4 drift monitor.
 
 - [ ] **Step 1: Write failing tests**
@@ -257,6 +279,17 @@ async def test_bot_persists_candles_it_reads():
     engine = BotEngine(db, market=MarketDataService(db=db, source="simulated", clock=lambda: NOON))
     await engine.process_symbol("u1", "BTC-USD", [], {}, RiskGuardV2(), {"BTC-USD": 45000.0})
     assert len(db.market_candles.docs) == 120
+
+async def test_only_new_closed_candles_are_written_in_one_bulk_call():
+    db = FakeDB()  # its market_candles records each bulk_write call and its ordered flag
+    clock = {"now": NOON}
+    svc = MarketDataService(db=db, source="simulated", clock=lambda: clock["now"])
+    await svc.get_candles("BTC-USD", periods=120)
+    clock["now"] = NOON + timedelta(minutes=1)
+    await svc.get_candles("BTC-USD", periods=120)
+    calls = db.market_candles.bulk_calls
+    assert [len(ops) for ops, _ in calls] == [120, 1]
+    assert all(ordered is False for _, ordered in calls)
 
 async def test_replay_reads_stored_candles():
     db = FakeDB()
@@ -284,7 +317,7 @@ Expected: FAIL. The engine builds `MarketDataService()` with no database, `repla
 
 - [ ] **Step 3: Implement**
 
-Accept an injected `market` and default to `MarketDataService(db=db)`. Pass it to the paper adapter as described above. Implement the `replay` branches. In `cycle`, wrap each `process_symbol` call: on `MarketDataUnavailable`, log, emit the same `market_data_failed` alert that `get_price_map` emits, and continue. `stop()` awaits `self.market.close()`.
+Accept an injected `market` and default to `MarketDataService(db=db)`. Pass it to the paper adapter as described above. Implement `persist_candles` as described and the `replay` branches. In `cycle`, wrap each `process_symbol` call: on `MarketDataUnavailable`, log, emit the same `market_data_failed` alert that `get_price_map` emits, and continue. `stop()` awaits `self.market.close()`.
 
 - [ ] **Step 4: Run the tests**
 
@@ -306,7 +339,8 @@ git commit -m "feat(bot): store candles the bot reads, add replay source, isolat
 
 **Interfaces:**
 - Consumes: tickers with `bid` and `ask` (Tasks 2 and 3).
-- Produces: `_reference_quote(symbol) -> dict` with `price`, `bid` and `ask`, where `bid` and `ask` may be `None`. Order results add `"price_basis": "ask" | "bid" | "last_plus_slippage"`.
+- Produces: `_reference_quote(symbol) -> dict` with `price`, `bid` and `ask`. It reads them through the market service's `get_current_price`, the interface M3's ccxt adapter will implement. If the quote has no `bid` or `ask`, as in `replay`, it synthesizes them as `price` plus and minus half of `PAPER_FALLBACK_SPREAD_BPS` (default 2).
+- Produces: `PaperExecutionConfig.extra_slippage_bps`, from `PAPER_EXTRA_SLIPPAGE_BPS`, default 0. It replaces `buy_slippage_bps` and `sell_slippage_bps` and their env vars. Order results add `"price_basis": "quote" | "synthetic_spread"`.
 
 - [ ] **Step 1: Write failing tests**
 
@@ -314,17 +348,24 @@ git commit -m "feat(bot): store candles the bot reads, add replay source, isolat
 async def test_paper_buy_fills_at_ask():
     adapter = PaperExecutionAdapterV2(market_data=FakeQuote(price=100.0, bid=99.9, ask=100.1))
     order = await adapter.place_market_buy("BTC-USD", 50.0)
-    assert order["filled_price"] == 100.1 and order["price_basis"] == "ask"
+    assert order["filled_price"] == 100.1 and order["price_basis"] == "quote"
 
 async def test_paper_sell_fills_at_bid():
     ...
-    assert order["filled_price"] == 99.9 and order["price_basis"] == "bid"
+    assert order["filled_price"] == 99.9 and order["price_basis"] == "quote"
 
-async def test_paper_fill_falls_back_to_slippage_without_quote():
+async def test_paper_fill_uses_synthetic_spread_without_quote():
     adapter = PaperExecutionAdapterV2(market_data=FakeQuote(price=100.0, bid=None, ask=None))
     order = await adapter.place_market_buy("BTC-USD", 50.0)
-    assert order["filled_price"] == pytest.approx(100.0 * 1.0008)
-    assert order["price_basis"] == "last_plus_slippage"
+    assert order["filled_price"] == pytest.approx(100.0 * 1.0001)
+    assert order["price_basis"] == "synthetic_spread"
+
+async def test_extra_slippage_is_optional_and_small():
+    config = PaperExecutionAdapterV2.from_env()
+    assert config.extra_slippage_bps == 0.0
+    adapter = PaperExecutionAdapterV2(market_data=FakeQuote(price=100.0, bid=99.9, ask=100.1),
+                                      config=replace(config, extra_slippage_bps=1.0))
+    assert (await adapter.place_market_buy("BTC-USD", 50.0))["filled_price"] == pytest.approx(100.1 * 1.0001)
 ```
 
 - [ ] **Step 2: Run and confirm the failures**
@@ -334,7 +375,7 @@ Expected: the first two FAIL because the fill is last price plus 8 bps.
 
 - [ ] **Step 3: Implement**
 
-Buys fill at `ask` and sells at `bid` when present, with no extra slippage. Without a quote, keep today's last price plus or minus the configured slippage. Fees, minimums and partial fills are unchanged.
+Buys fill at `ask` and sells at `bid`, times `1 ± extra_slippage_bps / 10000`. Fees, minimums and partial fills are unchanged. Existing tests that assert the old 8 bps fill price change to the new basis. List each one in the PR body.
 
 - [ ] **Step 4: Run the tests**
 
@@ -357,8 +398,11 @@ git commit -m "fix(paper): price fills from bid and ask, not last trade plus all
 - Test: `backend/tests/test_bot_engine_v2.py`
 
 **Interfaces:**
-- Produces: `build_idempotency_key(user_id, symbol, side, signal_snapshot) -> str` returns `f"{user_id}:{symbol}:{side}:{strategy}:{decision_candle_close}"`. `decision_candle_close` is the ISO close time of the last closed candle the plan was built from, read from `signal_snapshot["decision_candle_close"]`. If it is missing, raise `ValueError("signal_snapshot.decision_candle_close is required")`, so no order is placed without a decision time.
-- Produces: `process_symbol` sets `plan["decision_candle_close"] = hist[-1]["timestamp"]`.
+- Produces: `build_idempotency_key(user_id, symbol, side, signal_snapshot) -> str` returns `f"{user_id}:{symbol}:{side}:{strategy}:{timeframe}:{decision_candle_close}"`. `timeframe` comes from `signal_snapshot["timeframe"]` and is required, like the decision time. `decision_candle_close` is the ISO close time of the last closed candle the plan was built from, read from `signal_snapshot["decision_candle_close"]`. If it is missing, raise `ValueError("signal_snapshot.decision_candle_close is required")`, so no order is placed without a decision time.
+- Produces: `process_symbol` sets `plan["timeframe"]` (today `"1m"`, passed to `get_historical_data`) and `plan["decision_candle_close"] = hist[-1]["timestamp"]`.
+- Produces: `already_executed(key)` matches `{"idempotency_key": key, "status": {"$ne": "rejected"}}`. Every status except `rejected` counts as executed.
+- Produces: `record_trade_attempt` sets `idempotency_claim: True` on every trade whose status is not `rejected`. `mongo_indexes_v2.py` adds a unique index `uniq_trade_idempotency_claim` on `trades_v2.idempotency_key` with `partialFilterExpression={"idempotency_claim": True}`. MongoDB partial indexes cannot filter with `$ne`, hence the flag. When the insert raises `DuplicateKeyError`, the engine logs `duplicate_order_skipped` and stops for that order.
+- Modify also: `backend/services/portfolio_service_v2.py` (`record_trade_attempt`), `backend/services/mongo_indexes_v2.py`, `backend/tests/test_phase9_mongo_index_validation.py`.
 
 - [ ] **Step 1: Write failing tests**
 
@@ -367,7 +411,7 @@ def build(side, snap):
     return ExecutionControlV2.build_idempotency_key("u1", "BTC-USD", side, snap)
 
 def test_idempotency_key_differs_per_decision_candle():
-    snap = {"selected": {"strategy": "trend"}, "decision_candle_close": "2026-11-26T12:00:00+00:00"}
+    snap = {"selected": {"strategy": "trend"}, "timeframe": "1m", "decision_candle_close": "2026-11-26T12:00:00+00:00"}
     later = {**snap, "decision_candle_close": "2026-11-26T12:01:00+00:00"}
     assert build("BUY", snap) != build("BUY", later)
     assert build("BUY", snap) == build("BUY", dict(snap))
@@ -376,20 +420,32 @@ def test_idempotency_key_requires_decision_time():
     with pytest.raises(ValueError):
         ExecutionControlV2.build_idempotency_key("u1", "BTC-USD", "BUY", {"selected": {"strategy": "t"}})
 
+def test_idempotency_key_includes_timeframe():
+    snap = {"selected": {"strategy": "trend"}, "timeframe": "1m", "decision_candle_close": "2026-11-26T12:00:00+00:00"}
+    assert build("BUY", snap) != build("BUY", {**snap, "timeframe": "1h"})
+
+@pytest.mark.parametrize("status,expected", [("filled", True), ("partially_filled", True), ("unknown", True), ("rejected", False)])
+async def test_any_non_rejected_attempt_counts_as_executed(status, expected):
+    db = FakeDB()
+    await db.trades_v2.insert_one({"idempotency_key": "k", "status": status})
+    assert await ExecutionControlV2(db).already_executed("k") is expected
+
 async def test_bot_can_buy_again_after_round_trip():
     # FakeDB + simulated market; force planner output BUY, SELL, BUY on three successive candle closes
     ...
     assert [t["side"] for t in db.trades_v2.docs if t["status"] == "filled"] == ["BUY", "SELL", "BUY"]
 ```
 
-Update the existing key assertions in `test_phase3_trading_controls.py` and `test_e2e_paper_smoke.py`. Add `decision_candle_close` to their contexts and assert the new format. The e2e replay check still expects one trade.
+Add to `test_phase9_mongo_index_validation.py` an assertion that `uniq_trade_idempotency_claim` is created unique with that partial filter. Add to `test_e2e_paper_smoke.py`, which runs on real MongoDB, a direct insert of a second non-rejected trade with the same key, expecting `DuplicateKeyError`.
+
+Update the existing key assertions in `test_phase3_trading_controls.py` and `test_e2e_paper_smoke.py`. Add `timeframe` and `decision_candle_close` to their contexts and assert the new format. The e2e replay check still expects one trade.
 
 - [ ] **Step 2: Run and confirm the failures**
 
 Run: `cd backend && python -m pytest tests/test_bot_engine_v2.py tests/test_phase3_trading_controls.py -v`
-Expected: `test_bot_can_buy_again_after_round_trip` FAILS with only `["BUY", "SELL"]` filled, because the second BUY is skipped as a duplicate.
+Expected: `test_bot_can_buy_again_after_round_trip` FAILS with only `["BUY", "SELL"]` filled, because the second BUY is skipped as a duplicate. The timeframe, status and index tests also fail.
 
-- [ ] **Step 3: Implement the key change and set `decision_candle_close` in `process_symbol`**
+- [ ] **Step 3: Implement the key, the status rule, the claim flag and the index as described**
 
 - [ ] **Step 4: Run the tests**
 
@@ -512,7 +568,7 @@ git commit -m "fix(signals): efficiency-ratio regime so the range filter runs (P
 - Modify: `backend/services/risk_guard_v2.py`
 - Modify: `backend/services/bot_engine.py` (`process_symbol` uses the clipped notional)
 - Modify: `backend/services/portfolio_service_v2.py` (`equity_floor` in `update_risk_snapshot`)
-- Modify: `backend/auth_core.py:110`, `backend/api_routes_v2.py:19`
+- Modify: `backend/auth_core.py:110` (stop writing `capital_floor` for new users), `backend/api_routes_v2.py:19` (keep the field, accepted and ignored)
 - Modify: `backend/tests/test_phase3_trading_controls.py:106-116`
 - Test: `backend/tests/test_phase3_trading_controls.py`
 
@@ -547,7 +603,11 @@ Expected: both FAIL. The first is rejected with "position notional exceeds limit
 
 - [ ] **Step 3: Implement**
 
-Remove `capital_floor` from the signup default config and from the `BotConfig` model. Stored configs that still hold the field are ignored, because `BotConfig` already sets `extra="ignore"`.
+Stop writing `capital_floor` in the signup default config. Keep `capital_floor: float | None = None` on `BotConfig`, with a comment that it is deprecated and ignored, so older clients can still post it. `RiskGuardV2.from_config` ignores it, and stored configs that hold it keep loading. The frontend shows `equity_floor`, which now comes from the drawdown limit, so it needs no change.
+
+Add `test_legacy_capital_floor_is_accepted_and_ignored`: `RiskGuardV2.from_config({"capital_floor": 0.99, "max_drawdown_pct": 0.05})` does not halt at 2% down, and `BotConfig(capital_floor=0.97)` validates.
+
+The PR body must say: "The equity halt moves from 3% below peak (the old 0.97 capital floor) to 5% below peak (the drawdown limit)."
 
 - [ ] **Step 4: Run the tests**
 
@@ -600,44 +660,47 @@ git add backend/services/advanced_risk_manager.py backend/tests/test_advanced_ri
 git commit -m "fix(risk): portfolio heat uses position value, not units (P0-16)"
 ```
 
-### Task 11: Paper trading works over a simulated day
+### Task 11: Paper trading works across midnight on a scripted market
 
 **Files:**
 - Test: create `backend/tests/test_paper_soak_v2.py`
 
 **Interfaces:**
-- Consumes: `BotEngine(db, market=...)` (Task 4), the moving simulator with `clock` (Task 2), and every fix above.
+- Consumes: `BotEngine(db, market=...)` and the paper adapter wiring (Task 4), bid and ask quotes (Task 5), and every fix above.
+- Produces: a test-only `ScriptedMarket` that implements the market-service methods the engine and paper adapter call: `get_current_price`, `get_historical_data`, `get_candles` and `close`. It reads a mutable clock. Its price at time `t` comes from a scripted path that rises, falls, then rises again, with a fixed spread for `bid` and `ask`. It has no randomness.
 
 - [ ] **Step 1: Write the test**
 
-The test uses the real CI MongoDB through `app_state.db`, with a unique user ID and cleanup, as `test_e2e_paper_smoke.py` does. It creates an active bot config for `BTC-USD` and `ETH-USD`. It steps a mutable clock from `NOON` in 60-second increments for 1,440 steps and calls `engine.cycle(user_id)` each step. The engine's paper adapter shares the clocked simulator through the Task 4 wiring. Set `cooldown_seconds` to 300 as today.
+Use the real CI MongoDB through `app_state.db`, with a unique user ID and cleanup, as `test_e2e_paper_smoke.py` does. Create an active bot config for `BTC-USD` only, with `cooldown_seconds` at 300. Start the clock at 22:00 UTC and advance it 60 seconds per step, calling `engine.cycle(user_id)` directly each step. Never call `start()` or sleep. Run until 02:00 UTC the next day, so the run crosses midnight. Shape the path, for example up 22:00–23:00, down 23:00–00:30, up 00:30–02:00, so that the bot buys, sells and buys again. Check the strategies' thresholds in `strategy_ensemble_v2.py` when sizing the moves.
 
 ```python
 filled = [t for t in trades if t["status"] == "filled"]
-assert sum(t["side"] == "BUY" for t in filled) >= 2
-assert sum(t["side"] == "SELL" for t in filled) >= 1
+buys = [t for t in filled if t["side"] == "BUY"]
+assert len(buys) >= 2
+assert any(t["side"] == "SELL" for t in filled)
+# P0-1: a second buy of the same symbol and strategy
+assert len({(t["symbol"], t["signal_snapshot"]["selected"]["strategy"]) for t in buys}) < len(buys)
 assert len({t["idempotency_key"] for t in filled}) == len(filled)
+# P0-4: the daily start rolled at midnight and the bot did not halt
+state = await db.portfolio_state.find_one({"user_id": user_id})
+assert state["daily_start_date"] == "2026-11-27"
 assert (await db.bot_configs.find_one({"user_id": user_id}))["is_active"] is True
-report = await LedgerServiceV2(db).reconcile(user_id, starting_cash=10000.0)
-assert report["status"] == "ok", report
+assert (await LedgerServiceV2(db).reconcile(user_id, starting_cash=10000.0))["status"] == "ok"
 ```
 
-If the strategies make fewer than two buys in a day on the simulator, lengthen the run to two days. Do not loosen the thresholds. Record the counts the test saw in the PR body.
+- [ ] **Step 2: Prove the test catches the bugs**
 
-- [ ] **Step 2: Run it**
-
-Run: `cd backend && python -m pytest tests/test_paper_soak_v2.py -v`
-Expected: PASS in CI. On `main` before this milestone it fails: at most one BUY per strategy, and no movement.
+The fixes are already in place, so the test passes on this branch. To show it would have caught P0-1 and P0-4, push one throwaway commit that restores the old idempotency key (no timeframe or decision time) and stops the daily roll. Confirm in CI that this test fails on the second-buy and `daily_start_date` assertions. Then push `git revert` of that commit and confirm CI is green. Put both run URLs in the PR body.
 
 - [ ] **Step 3: Commit**
 
 ```bash
 git add backend/tests/test_paper_soak_v2.py
-git commit -m "test: paper bot trades repeatedly over a simulated day"
+git commit -m "test: paper bot buys, sells and buys again across UTC midnight"
 ```
 
 ### Task 12: Pull request
 
-- [ ] **Step 1:** Push `feat/m15a-paper-trading` and open a PR to `main` titled "Milestone 1.5a: make paper trading work". The body lists each P0 ID with its commit and failing-first test, the replaced capital-floor test and why, and the soak counts.
+- [ ] **Step 1:** The draft PR already exists. Update its body to list each P0 ID with its fix commit and failing-first run URL, the replaced capital-floor test and why, the 3% to 5% halt change, the paper fill tests whose expected prices changed, and the Task 11 proof runs.
 - [ ] **Step 2:** Run `gh pr checks`. Expected: every CI job passes. Fix failures at the root cause.
-- [ ] **Step 3:** Leave the merge to the owner.
+- [ ] **Step 3:** Leave the PR in draft until PR #1 merges, then rebase onto `main` and mark it ready. Leave the merge to the owner.
