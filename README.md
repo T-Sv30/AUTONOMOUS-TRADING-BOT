@@ -495,7 +495,7 @@ The safe default is paper mode.
 Use these values for normal local development:
 
     DEBUG=True
-    SIMULATION_MODE=True
+    MARKET_DATA_SOURCE=live
     TRADING_MODE=paper
     JWT_SECRET=replace-with-at-least-32-random-characters
     CORS_ORIGINS=http://localhost:3000
@@ -510,7 +510,7 @@ Use these values for normal local development:
 | Variable | Beginner explanation |
 |---|---|
 | `DEBUG` | Turns development behavior on/off. Use `False` outside local development. |
-| `SIMULATION_MODE` | Keeps the system in simulation-oriented mode. |
+| `MARKET_DATA_SOURCE` | Where prices come from: `live` (real Coinbase prices, the default), `simulated` (deterministic fake prices for tests and CI) or `replay`. The old `SIMULATION_MODE` variable is deprecated: `True` maps to `simulated`, anything else to `live`. |
 | `TRADING_MODE` | Controls the trading mode. Safe default is `paper`. |
 | `JWT_SECRET` | Secret used for login tokens. Must be long and private. |
 | `CORS_ORIGINS` | Frontend URLs allowed to talk to the backend. Do not use wildcard in production. |

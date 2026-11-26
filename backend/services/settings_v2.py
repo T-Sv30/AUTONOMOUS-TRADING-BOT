@@ -6,6 +6,8 @@ from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from services.market_data_service import resolve_market_data_source
+
 logger = logging.getLogger(__name__)
 
 
@@ -32,7 +34,7 @@ class SettingsV2(BaseModel):
     model_config = ConfigDict(extra="ignore", validate_assignment=True)
 
     debug: bool = False
-    simulation_mode: bool = True
+    market_data_source: str = "live"
     trading_mode: TradingMode = TradingMode.PAPER
     runtime_role: RuntimeRole = RuntimeRole.API
     run_mongo_index_bootstrap: bool = False
@@ -77,7 +79,7 @@ class SettingsV2(BaseModel):
         runtime_role = RuntimeRole(str(raw_role).strip().lower())
         return cls(
             debug=debug,
-            simulation_mode=cls.env_bool("SIMULATION_MODE", True),
+            market_data_source=resolve_market_data_source(),
             trading_mode=TradingMode(os.getenv("TRADING_MODE", "paper")),
             runtime_role=runtime_role,
             run_mongo_index_bootstrap=cls.env_bool("RUN_MONGO_INDEX_BOOTSTRAP", debug),
@@ -158,7 +160,7 @@ class SettingsV2(BaseModel):
     def redacted_report(self) -> dict[str, Any]:
         return {
             "debug": self.debug,
-            "simulation_mode": self.simulation_mode,
+            "market_data_source": self.market_data_source,
             "trading_mode": self.trading_mode.value,
             "runtime_role": self.runtime_role.value,
             "run_mongo_index_bootstrap": self.run_mongo_index_bootstrap,

@@ -5,7 +5,7 @@ from services.settings_v2 import SettingsV2, TradingMode
 def make_settings(**overrides):
     base = {
         "debug": False,
-        "simulation_mode": True,
+        "market_data_source": "simulated",
         "trading_mode": TradingMode.PAPER,
         "jwt_secret": "j" * 40,
         "cors_origins": ["https://example.com"],

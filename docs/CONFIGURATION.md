@@ -80,7 +80,7 @@ RUNTIME_ROLE=api
 API_EMBED_BOT_MANAGER=false
 RUN_MONGO_INDEX_BOOTSTRAP=false
 TRADING_MODE=paper
-SIMULATION_MODE=True
+MARKET_DATA_SOURCE=live
 COINBASE_LIVE_ORDER_KILL_SWITCH=True
 ```
 
@@ -90,5 +90,7 @@ For worker role:
 RUNTIME_ROLE=worker
 RUN_MONGO_INDEX_BOOTSTRAP=false
 TRADING_MODE=paper
-SIMULATION_MODE=True
+MARKET_DATA_SOURCE=live
 ```
+
+`MARKET_DATA_SOURCE` accepts `live` (real Coinbase prices, default), `simulated` (deterministic fake prices for tests and CI) or `replay`. The older `SIMULATION_MODE` is deprecated; when only it is set, `True` maps to `simulated` and anything else to `live`, with a warning.

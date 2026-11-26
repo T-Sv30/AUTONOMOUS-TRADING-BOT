@@ -9,6 +9,32 @@ import aiohttp
 
 logger = logging.getLogger(__name__)
 
+MARKET_DATA_SOURCES = ("live", "simulated", "replay")
+_TRUTHY = {"1", "true", "yes", "on"}
+
+
+def parse_market_data_source(value: str | None) -> str:
+    if value is None or not str(value).strip():
+        return "live"
+    source = str(value).strip().lower()
+    if source not in MARKET_DATA_SOURCES:
+        raise ValueError(
+            f"Invalid MARKET_DATA_SOURCE={value!r}. Allowed values: {', '.join(MARKET_DATA_SOURCES)}"
+        )
+    return source
+
+
+def resolve_market_data_source(environ=os.environ) -> str:
+    """Single rule for the data source: MARKET_DATA_SOURCE, then legacy SIMULATION_MODE, then live."""
+    configured = environ.get("MARKET_DATA_SOURCE")
+    if configured is not None and configured.strip():
+        return parse_market_data_source(configured)
+    legacy = environ.get("SIMULATION_MODE")
+    if legacy is not None and legacy.strip():
+        logger.warning("SIMULATION_MODE is deprecated; set MARKET_DATA_SOURCE=live|simulated|replay instead.")
+        return "simulated" if legacy.strip().lower() in _TRUTHY else "live"
+    return "live"
+
 
 class MarketDataUnavailable(RuntimeError):
     pass
@@ -35,12 +61,23 @@ class MarketDataService:
     }
     MAX_COINBASE_CANDLES = 300
 
-    def __init__(self, db=None, simulation_mode: bool | None = None, seed: int | str | None = None):
+    def __init__(
+        self,
+        db=None,
+        source: str | None = None,
+        seed: int | str | None = None,
+        clock=None,
+        session_factory=None,
+        timeout_seconds: float | None = None,
+    ):
         self.db = db
-        self.simulation_mode = (
-            simulation_mode
-            if simulation_mode is not None
-            else os.getenv("SIMULATION_MODE", "True").strip().lower() in {"1", "true", "yes", "on"}
+        self.source = parse_market_data_source(source) if source is not None else resolve_market_data_source()
+        self.clock = clock or self.utc_now
+        self.session_factory = session_factory or aiohttp.ClientSession
+        self.timeout_seconds = (
+            timeout_seconds
+            if timeout_seconds is not None
+            else float(os.getenv("MARKET_DATA_TIMEOUT_SECONDS", "10"))
         )
         self.base_url = os.getenv("COINBASE_EXCHANGE_URL", "https://api.exchange.coinbase.com")
         self.seed = seed if seed is not None else os.getenv("SIMULATION_SEED", "autonomous-trading-bot")
@@ -83,7 +120,7 @@ class MarketDataService:
         return random.Random(seed_int)
 
     async def get_current_price(self, symbol: str) -> dict[str, Any]:
-        if self.simulation_mode:
+        if self.source == "simulated":
             return self._simulate_price_data(symbol)
 
         try:
@@ -145,7 +182,7 @@ class MarketDataService:
         if periods <= 0:
             return []
         self.granularity_for(timeframe)
-        if self.simulation_mode:
+        if self.source == "simulated":
             candles = self._simulate_candles(symbol, timeframe, periods)
         else:
             candles = await self._fetch_coinbase_candles(symbol, timeframe, periods)

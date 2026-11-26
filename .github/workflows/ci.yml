@@ -18,7 +18,7 @@ env:
   NODE_VERSION: "20"
   DEBUG: "True"
   JWT_SECRET: ci-local-secret-with-more-than-32-characters
-  SIMULATION_MODE: "True"
+  MARKET_DATA_SOURCE: simulated
   TRADING_MODE: paper
   CORS_ORIGINS: http://localhost:3000
   DB_NAME: trading_bot_ci
@@ -188,7 +188,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
       - name: Create CI env file
-        run: cp .env.example .env
+        run: |
+          cp .env.example .env
+          sed -i 's/^MARKET_DATA_SOURCE=.*/MARKET_DATA_SOURCE=simulated/' .env
       - name: Build and start compose stack
         run: docker compose up --build -d
       - name: Wait for backend health

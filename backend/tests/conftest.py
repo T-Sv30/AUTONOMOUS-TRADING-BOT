@@ -5,8 +5,12 @@ loop that first uses it, so every async test must share one session-scoped
 loop; otherwise later tests fail with "Event loop is closed".
 """
 
+import os
+
 import pytest
 from pytest_asyncio import is_async_test
+
+os.environ.setdefault("MARKET_DATA_SOURCE", "simulated")
 
 
 def pytest_collection_modifyitems(items):

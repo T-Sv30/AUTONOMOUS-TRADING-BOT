@@ -49,7 +49,7 @@ def validate_jwt_secret(secret: str, debug: bool) -> None:
 
 
 DEBUG = SETTINGS.debug
-SIMULATION_MODE = SETTINGS.simulation_mode
+MARKET_DATA_SOURCE = SETTINGS.market_data_source
 RUNTIME_ROLE = SETTINGS.runtime_role
 RUN_MONGO_INDEX_BOOTSTRAP = SETTINGS.run_mongo_index_bootstrap
 API_EMBED_BOT_MANAGER = SETTINGS.api_embed_bot_manager
