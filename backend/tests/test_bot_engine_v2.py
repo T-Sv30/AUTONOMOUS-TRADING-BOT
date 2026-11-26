@@ -356,3 +356,33 @@ async def test_oversized_buy_plan_is_clipped_to_the_cap_and_fills(monkeypatch):
     filled = [t for t in db.trades_v2.docs if t["status"] == "filled"]
     assert len(filled) == 1
     assert filled[0]["notional_usd"] == pytest.approx(100.0, rel=0.01)
+
+
+@pytest.mark.asyncio
+async def test_trade_cooldown_runs_on_the_market_clock(monkeypatch):
+    """last_trade_at and the cooldown check both read the engine's market clock, not wall time."""
+    monkeypatch.setenv("TRADING_MODE", "paper")
+    db = FakeDB()
+    db.bot_configs.docs.append({"user_id": "u1", "is_active": True, "symbols": ["BTC-USD"], "cooldown_seconds": 300})
+    far_from_now = datetime(2031, 3, 4, 9, 0, tzinfo=UTC)
+    clock = {"now": far_from_now}
+    engine = BotEngine(db, market=MarketDataService(db=db, source="simulated", clock=lambda: clock["now"]))
+
+    scripted = iter(["BUY", "SELL", "BUY", "BUY"])
+
+    def build_plan(symbol, prices, has_position, base_notional=100.0):
+        return {"symbol": symbol, "action": next(scripted), "selected": {"strategy": "trend"}, "notional": 50.0}
+
+    monkeypatch.setattr(engine.planner, "build_plan", build_plan)
+
+    async def filled_sides_after(seconds):
+        clock["now"] = far_from_now + timedelta(seconds=seconds)
+        await engine.cycle("u1")
+        return [t["side"] for t in db.trades_v2.docs if t["status"] == "filled"]
+
+    assert await filled_sides_after(0) == ["BUY"]
+    assert await filled_sides_after(60) == ["BUY", "SELL"]
+    # 60 scripted seconds after the sell: the 300 s cooldown blocks the buy.
+    assert await filled_sides_after(120) == ["BUY", "SELL"]
+    # 301 scripted seconds after the sell: the cooldown has passed on the market clock.
+    assert await filled_sides_after(361) == ["BUY", "SELL", "BUY"]
