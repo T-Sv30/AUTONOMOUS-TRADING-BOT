@@ -207,6 +207,27 @@ async def test_failing_symbol_is_skipped_and_others_still_trade(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_cycle_rolls_daily_start_on_the_market_clock(monkeypatch):
+    monkeypatch.setenv("TRADING_MODE", "paper")
+    db = FakeDB()
+    db.bot_configs.docs.append({"user_id": "u1", "is_active": True, "symbols": ["BTC-USD"]})
+    db.portfolio_state.docs.append({
+        "user_id": "u1",
+        "cash_balance": 10000.0,
+        "realized_pnl": 0.0,
+        "equity_high": 10000.0,
+        "daily_start_equity": 10000.0,
+        "daily_start_date": "2026-11-25",
+    })
+    just_after_midnight = datetime(2026, 11, 26, 0, 0, 5, tzinfo=UTC)
+    engine = BotEngine(db, market=MarketDataService(db=db, source="simulated", clock=lambda: just_after_midnight))
+    monkeypatch.setattr(engine.planner, "build_plan", lambda symbol, prices, has_position, base_notional=100.0: {"symbol": symbol, "action": "HOLD"})
+    await engine.cycle("u1")
+    state = await db.portfolio_state.find_one({"user_id": "u1"})
+    assert state["daily_start_date"] == "2026-11-26"
+
+
+@pytest.mark.asyncio
 async def test_paper_fills_use_the_engine_market():
     market = MarketDataService(db=FakeDB(), source="simulated", clock=lambda: NOON)
     engine = BotEngine(FakeDB(), market=market)
