@@ -80,6 +80,7 @@ class RiskGuardV2:
         positions: list[dict[str, Any]],
         proposed_notional: float,
         last_trade_at_iso: str | None = None,
+        now: datetime | None = None,
     ) -> dict[str, Any]:
         kill = self.should_kill_switch(metrics)
         if kill["triggered"]:
@@ -99,7 +100,8 @@ class RiskGuardV2:
         if last_trade_at_iso:
             try:
                 last_trade_at = datetime.fromisoformat(last_trade_at_iso.replace("Z", "+00:00"))
-                if (self.utc_now() - last_trade_at).total_seconds() < self.cooldown_seconds:
+                # The cooldown runs on the caller's clock (the engine's market clock), the same clock that wrote last_trade_at.
+                if ((now or self.utc_now()) - last_trade_at).total_seconds() < self.cooldown_seconds:
                     return {"allowed": False, "reason": "trade cooldown active"}
             except Exception as exc:
                 logger.warning("Ignoring unparseable last_trade_at %r for cooldown check: %s", last_trade_at_iso, exc)
