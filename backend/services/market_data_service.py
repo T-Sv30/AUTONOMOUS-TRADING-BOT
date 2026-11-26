@@ -288,6 +288,8 @@ class MarketDataService:
             # Coinbase Exchange candle format: [time, low, high, open, close, volume]
             open_time = datetime.fromtimestamp(int(row[0]), tz=UTC)
             close_time = open_time + timedelta(seconds=granularity)
+            if close_time > now:
+                continue
             is_stale = (now - close_time).total_seconds() > granularity * 3
             candle = {
                 "symbol": symbol,
