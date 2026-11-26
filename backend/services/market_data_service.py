@@ -1,5 +1,6 @@
 import hashlib
 import logging
+import math
 import os
 import random
 from datetime import UTC, datetime, timedelta
@@ -44,7 +45,7 @@ class MarketDataService:
     """Market-data gateway for simulation and Coinbase Exchange OHLCV data.
 
     Phase 1 goals implemented here:
-    - deterministic seeded simulation data
+    - deterministic simulation data: a seeded function of time
     - real Coinbase candle retrieval for non-simulation mode
     - MongoDB candle persistence when a db handle is supplied
     - timeframe/granularity support
@@ -114,10 +115,30 @@ class MarketDataService:
         ]
         return hashlib.sha256("|".join(map(str, parts)).encode("utf-8")).hexdigest()
 
-    def _rng_for(self, symbol: str, timeframe: str, periods: int) -> random.Random:
-        seed_material = f"{self.seed}:{symbol}:{timeframe}:{periods}"
-        seed_int = int(hashlib.sha256(seed_material.encode("utf-8")).hexdigest()[:16], 16)
-        return random.Random(seed_int)
+    # Simulated log-price waves: (period seconds, amplitude). 6 hours, 2 days, 9 days.
+    SIM_WAVES = ((6 * 3600, 0.015), (2 * 86400, 0.04), (9 * 86400, 0.08))
+    SIM_MINUTE_NOISE = 0.0015
+    SIM_WICK_NOISE = 0.002
+
+    @staticmethod
+    def _sim_base_price(symbol: str) -> float:
+        return 45000.0 if "BTC" in symbol else 2500.0 if "ETH" in symbol else 1000.0
+
+    @staticmethod
+    def _seed_int(material: str) -> int:
+        return int(hashlib.sha256(material.encode("utf-8")).hexdigest()[:16], 16)
+
+    def _sim_price(self, symbol: str, at: datetime) -> float:
+        """The one source of simulated prices: a deterministic function of (seed, symbol, at)."""
+        epoch = at.timestamp()
+        digest = hashlib.sha256(f"{self.seed}:{symbol}".encode()).digest()
+        log_move = 0.0
+        for idx, (period, amplitude) in enumerate(self.SIM_WAVES):
+            phase = int.from_bytes(digest[idx * 4 : idx * 4 + 4], "big") / 2**32 * 2 * math.pi
+            log_move += amplitude * math.sin(2 * math.pi * epoch / period + phase)
+        minute = int(epoch // 60)
+        noise = random.Random(self._seed_int(f"{self.seed}:{symbol}:{minute}")).uniform(-self.SIM_MINUTE_NOISE, self.SIM_MINUTE_NOISE)
+        return self._sim_base_price(symbol) * math.exp(log_move) * (1 + noise)
 
     async def get_current_price(self, symbol: str) -> dict[str, Any]:
         if self.source == "simulated":
@@ -148,16 +169,18 @@ class MarketDataService:
             raise MarketDataUnavailable(f"Market data unavailable for {symbol}") from exc
 
     def _simulate_price_data(self, symbol: str) -> dict[str, Any]:
-        rng = self._rng_for(symbol, "ticker", 1)
-        base_prices = {"BTC-USD": 45000.0, "ETH-USD": 2500.0}
-        base = base_prices.get(symbol, 1000.0)
-        price = base * (1 + rng.uniform(-0.025, 0.025))
+        now = self.clock()
+        price = self._sim_price(symbol, now)
+        half_spread = float(os.getenv("SIM_SPREAD_BPS", "2")) / 2 / 10000
+        rng = random.Random(self._seed_int(f"{self.seed}:{symbol}:ticker:{int(now.timestamp() // 60)}"))
         return {
             "symbol": symbol,
-            "price": round(price, 2),
+            "price": round(price, 8),
+            "bid": round(price * (1 - half_spread), 8),
+            "ask": round(price * (1 + half_spread), 8),
             "volume": round(rng.uniform(100, 1000), 8),
-            "change_24h": round(rng.uniform(-5, 5), 2),
-            "timestamp": self.utc_now().isoformat(),
+            "change_24h": round((price / self._sim_price(symbol, now - timedelta(days=1)) - 1) * 100, 2),
+            "timestamp": now.isoformat(),
             "simulation": True,
             "source": "seeded_simulation",
             "quality": "synthetic_seeded",
@@ -191,20 +214,18 @@ class MarketDataService:
 
     def _simulate_candles(self, symbol: str, timeframe: str, periods: int) -> list[dict[str, Any]]:
         granularity = self.granularity_for(timeframe)
-        rng = self._rng_for(symbol, timeframe, periods)
-        base_price = 45000.0 if "BTC" in symbol else 2500.0 if "ETH" in symbol else 1000.0
-        now = self.utc_now().replace(second=0, microsecond=0)
-        start = now - timedelta(seconds=granularity * periods)
-        price = base_price
+        now = self.clock()
+        end_epoch = int(now.timestamp()) // granularity * granularity
+        start = datetime.fromtimestamp(end_epoch - granularity * periods, tz=UTC)
         candles: list[dict[str, Any]] = []
         for idx in range(periods):
             open_time = start + timedelta(seconds=granularity * idx)
             close_time = open_time + timedelta(seconds=granularity)
-            drift = rng.uniform(-0.008, 0.008)
-            open_price = price
-            close_price = max(0.01, open_price * (1 + drift))
-            high = max(open_price, close_price) * (1 + rng.uniform(0, 0.004))
-            low = min(open_price, close_price) * (1 - rng.uniform(0, 0.004))
+            open_price = self._sim_price(symbol, open_time)
+            close_price = self._sim_price(symbol, close_time)
+            rng = random.Random(self._seed_int(f"{self.seed}:{symbol}:{timeframe}:{int(open_time.timestamp())}"))
+            high = max(open_price, close_price) * (1 + rng.uniform(0, self.SIM_WICK_NOISE))
+            low = min(open_price, close_price) * (1 - rng.uniform(0, self.SIM_WICK_NOISE))
             volume = rng.uniform(100, 1000)
             candle = {
                 "symbol": symbol,
@@ -223,11 +244,10 @@ class MarketDataService:
                 "simulation": True,
                 "quality": "synthetic_seeded",
                 "is_stale": False,
-                "ingested_at": self.utc_now().isoformat(),
+                "ingested_at": now.isoformat(),
             }
             candle["checksum"] = self.candle_checksum(candle)
             candles.append(candle)
-            price = close_price
         return candles
 
     async def _fetch_coinbase_candles(self, symbol: str, timeframe: str, periods: int) -> list[dict[str, Any]]:
