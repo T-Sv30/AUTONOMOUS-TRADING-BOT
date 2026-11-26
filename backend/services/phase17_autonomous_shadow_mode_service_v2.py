@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
+from services.strategy_ensemble_v2 import StrategyEnsembleV2
+
 
 @dataclass(frozen=True)
 class ShadowCheck:
@@ -34,7 +36,8 @@ class Phase17AutonomousShadowModeServiceV2:
     decision, and simulated outcome evidence for later review.
     """
 
-    ALLOWED_STRATEGIES = {"ma_cross_risk_managed_v1"}
+    # Derived from the strategies the bot runs (Decision 4: the plug-in registry arrives in M4).
+    ALLOWED_STRATEGIES = StrategyEnsembleV2.STRATEGY_NAMES
     ALLOWED_SYMBOLS = {"BTC-USD", "ETH-USD"}
     DEFAULT_MIN_CONFIDENCE = 0.70
     DEFAULT_MAX_MARKET_DATA_AGE_SECONDS = 30
