@@ -141,13 +141,33 @@ async def test_only_new_closed_candles_are_written_in_one_bulk_call():
 async def test_replay_reads_stored_candles():
     db = FakeDB()
     await MarketDataService(db=db, source="simulated", clock=lambda: NOON).get_candles("BTC-USD", periods=30)
-    replay = MarketDataService(db=db, source="replay")
+    replay = MarketDataService(db=db, source="replay", replay_exchange="simulation")
     candles = await replay.get_candles("BTC-USD", periods=30)
     assert len(candles) == 30
     ticker = await replay.get_current_price("BTC-USD")
     assert ticker["price"] == candles[-1]["close"]
     assert ticker["bid"] is None and ticker["ask"] is None
     assert len(db.market_candles.bulk_calls) == 1  # replay does not write
+
+
+@pytest.mark.asyncio
+async def test_replay_reads_only_the_configured_exchange():
+    db = FakeDB()
+    sim = MarketDataService(db=db, source="simulated", clock=lambda: NOON)
+    candles = await sim.get_candles("BTC-USD", periods=10)
+    other = [{**c, "exchange": "coinbase_exchange", "close": 1.0, "price": 1.0} for c in candles]
+    await sim.persist_candles(other)
+    assert len(db.market_candles.docs) == 20
+
+    replay = MarketDataService(db=db, source="replay", replay_exchange="simulation")
+    replayed = await replay.get_candles("BTC-USD", periods=20)
+    assert len(replayed) == 10
+    assert all(c["exchange"] == "simulation" for c in replayed)
+    assert (await replay.get_current_price("BTC-USD"))["price"] == candles[-1]["close"]
+
+    default = MarketDataService(db=db, source="replay")
+    assert default.replay_exchange == "coinbase_exchange"
+    assert (await default.get_current_price("BTC-USD"))["price"] == 1.0
 
 
 @pytest.mark.asyncio
