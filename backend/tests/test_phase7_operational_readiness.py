@@ -81,6 +81,7 @@ def test_operational_readiness_paper_mode_ready(monkeypatch):
     monkeypatch.setenv("DB_NAME", "trading_bot_test")
     monkeypatch.setenv("CORS_ORIGINS", "http://localhost:3000")
     monkeypatch.setenv("TRADING_MODE", "paper")
+    # live: strict readiness warns when the source is not live
     monkeypatch.setenv("MARKET_DATA_SOURCE", "live")
     monkeypatch.setenv("LIVE_TRADING_ENABLED", "false")
     monkeypatch.setenv("LIVE_EXECUTION_ADAPTER", "disabled")

@@ -62,8 +62,8 @@ MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQg...
 YOUR_ACTUAL_PRIVATE_KEY_CONTENT_HERE...
 -----END EC PRIVATE KEY-----
 
-# Trading Mode (Change to False for live trading)
-SIMULATION_MODE=False
+# Market data source (live = real Coinbase prices; simulated = fake prices)
+MARKET_DATA_SOURCE=live
 ```
 
 **Important Notes:**
@@ -192,10 +192,10 @@ The bot includes multiple layers of protection:
 **Check 1: API Credentials**
 ```bash
 grep "COINBASE_API_KEY" /app/backend/.env
-grep "SIMULATION_MODE" /app/backend/.env
+grep "MARKET_DATA_SOURCE" /app/backend/.env
 ```
 - Verify API key format is correct
-- Ensure SIMULATION_MODE=False
+- Ensure MARKET_DATA_SOURCE=live
 
 **Check 2: Backend Logs**
 ```bash
@@ -268,7 +268,7 @@ curl -s -X GET "http://localhost:8001/api/trades" \
 To return to simulation mode:
 
 1. Edit `/app/backend/.env`
-2. Change `SIMULATION_MODE=False` to `SIMULATION_MODE=True`
+2. Change `MARKET_DATA_SOURCE=live` to `MARKET_DATA_SOURCE=simulated`
 3. Restart backend: `sudo supervisorctl restart backend`
 4. Bot will resume using simulated data
 

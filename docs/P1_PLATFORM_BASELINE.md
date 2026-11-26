@@ -103,7 +103,7 @@ The CI workflow has three jobs:
 The Docker Compose stack preserves the current safety boundary:
 
 - `TRADING_MODE=paper`
-- `SIMULATION_MODE=True`
+- `MARKET_DATA_SOURCE=live`
 - `COINBASE_LIVE_ORDER_KILL_SWITCH=True`
 - live trading disabled by default
 - API and worker are separate services
