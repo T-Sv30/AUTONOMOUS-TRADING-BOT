@@ -80,8 +80,19 @@ class MarketDataService:
             if timeout_seconds is not None
             else float(os.getenv("MARKET_DATA_TIMEOUT_SECONDS", "10"))
         )
+        self._session = None
         self.base_url = os.getenv("COINBASE_EXCHANGE_URL", "https://api.exchange.coinbase.com")
         self.seed = seed if seed is not None else os.getenv("SIMULATION_SEED", "autonomous-trading-bot")
+
+    def _get_session(self):
+        if self._session is None:
+            self._session = self.session_factory(timeout=aiohttp.ClientTimeout(total=self.timeout_seconds))
+        return self._session
+
+    async def close(self) -> None:
+        session, self._session = self._session, None
+        if session is not None:
+            await session.close()
 
     @classmethod
     def granularity_for(cls, timeframe: str) -> int:
@@ -145,23 +156,24 @@ class MarketDataService:
             return self._simulate_price_data(symbol)
 
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(f"{self.base_url}/products/{symbol}/ticker") as response:
-                    if response.status != 200:
-                        raise MarketDataUnavailable(f"Coinbase ticker returned HTTP {response.status} for {symbol}")
-                    data = await response.json()
-                    price = data.get("price")
-                    if price is None:
-                        raise MarketDataUnavailable(f"Coinbase ticker response missing price for {symbol}")
-                    return {
-                        "symbol": symbol,
-                        "price": float(price),
-                        "volume": float(data.get("volume", 0)),
-                        "timestamp": self.utc_now().isoformat(),
-                        "simulation": False,
-                        "source": "coinbase_exchange",
-                        "quality": "live_ticker",
-                    }
+            async with self._get_session().get(f"{self.base_url}/products/{symbol}/ticker") as response:
+                if response.status != 200:
+                    raise MarketDataUnavailable(f"Coinbase ticker returned HTTP {response.status} for {symbol}")
+                data = await response.json()
+                price = data.get("price")
+                if price is None:
+                    raise MarketDataUnavailable(f"Coinbase ticker response missing price for {symbol}")
+                return {
+                    "symbol": symbol,
+                    "price": float(price),
+                    "bid": float(data.get("bid") or price),
+                    "ask": float(data.get("ask") or price),
+                    "volume": float(data.get("volume", 0)),
+                    "timestamp": self.clock().isoformat(),
+                    "simulation": False,
+                    "source": "coinbase_exchange",
+                    "quality": "live_ticker",
+                }
         except MarketDataUnavailable:
             raise
         except Exception as exc:
@@ -252,16 +264,16 @@ class MarketDataService:
 
     async def _fetch_coinbase_candles(self, symbol: str, timeframe: str, periods: int) -> list[dict[str, Any]]:
         granularity = self.granularity_for(timeframe)
-        limit = min(periods, self.MAX_COINBASE_CANDLES)
-        end = self.utc_now()
+        limit = min(periods + 1, self.MAX_COINBASE_CANDLES)  # +1: the newest candle is usually still open
+        now = self.clock()
+        end = now
         start = end - timedelta(seconds=granularity * limit)
         params = {"granularity": granularity, "start": start.isoformat(), "end": end.isoformat()}
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(f"{self.base_url}/products/{symbol}/candles", params=params) as response:
-                    if response.status != 200:
-                        raise MarketDataUnavailable(f"Coinbase candles returned HTTP {response.status} for {symbol}")
-                    raw = await response.json()
+            async with self._get_session().get(f"{self.base_url}/products/{symbol}/candles", params=params) as response:
+                if response.status != 200:
+                    raise MarketDataUnavailable(f"Coinbase candles returned HTTP {response.status} for {symbol}")
+                raw = await response.json()
         except MarketDataUnavailable:
             raise
         except Exception as exc:
@@ -272,11 +284,12 @@ class MarketDataService:
             raise MarketDataUnavailable(f"Coinbase returned no candles for {symbol}")
 
         candles = []
-        now = self.utc_now()
         for row in sorted(raw, key=lambda item: item[0]):
             # Coinbase Exchange candle format: [time, low, high, open, close, volume]
             open_time = datetime.fromtimestamp(int(row[0]), tz=UTC)
             close_time = open_time + timedelta(seconds=granularity)
+            if close_time > now:
+                continue  # still open: not a closed candle
             is_stale = (now - close_time).total_seconds() > granularity * 3
             candle = {
                 "symbol": symbol,

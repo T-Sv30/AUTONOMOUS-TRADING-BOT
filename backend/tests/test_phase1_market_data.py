@@ -1,4 +1,3 @@
-import asyncio
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -251,7 +250,7 @@ async def test_live_ticker_carries_bid_and_ask():
 
 @pytest.mark.asyncio
 async def test_live_timeout_becomes_market_data_unavailable():
-    svc = live(error=asyncio.TimeoutError())
+    svc = live(error=TimeoutError())
     with pytest.raises(MarketDataUnavailable):
         await svc.get_current_price("BTC-USD")
     with pytest.raises(MarketDataUnavailable):
