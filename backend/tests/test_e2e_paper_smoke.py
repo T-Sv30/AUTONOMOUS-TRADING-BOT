@@ -15,11 +15,14 @@ os.environ.setdefault("LIVE_EXECUTION_ADAPTER", "disabled")
 
 import httpx
 import pytest
+from pymongo.errors import DuplicateKeyError
 
 from app_factory import create_app
 from app_state import db
 from services.bot_engine import BotEngine
 from services.ledger_service_v2 import LedgerServiceV2
+from services.mongo_indexes_v2 import MongoIndexServiceV2
+from services.portfolio_service_v2 import PortfolioServiceV2
 
 
 async def cleanup_user(user_id: str | None = None, email: str | None = None) -> None:
@@ -109,6 +112,8 @@ async def test_e2e_paper_smoke_api_auth_controlled_execution_reconciliation_and_
             "selected": {"strategy": "e2e_paper_smoke"},
             "notional": 50.0,
             "reason": "deterministic e2e smoke test",
+            "timeframe": "1m",
+            "decision_candle_close": "2026-11-26T12:00:00+00:00",
         }
 
         engine = BotEngine(db)
@@ -123,7 +128,7 @@ async def test_e2e_paper_smoke_api_auth_controlled_execution_reconciliation_and_
         assert trade["paper_execution"] is True
         assert trade["simulation"] is True
         assert trade["execution_adapter"] == "paper_v2"
-        assert trade["idempotency_key"] == "{}:{}:{}:{}:{}".format(user_id, "BTC-USD", "BUY", "BUY", "e2e_paper_smoke")
+        assert trade["idempotency_key"] == f"{user_id}:BTC-USD:BUY:e2e_paper_smoke:1m:2026-11-26T12:00:00+00:00"
 
         positions = await db.positions_v2.find({"user_id": user_id}, {"_id": 0}).to_list(100)
         assert len(positions) == 1
@@ -155,3 +160,21 @@ async def test_e2e_paper_smoke_api_auth_controlled_execution_reconciliation_and_
 
     finally:
         await cleanup_user(user_id=user_id, email=email)
+
+
+@pytest.mark.asyncio
+async def test_e2e_mongo_rejects_second_non_rejected_trade_with_same_idempotency_key():
+    """The unique partial index on trades_v2 is the backstop behind the lock and already_executed."""
+    await MongoIndexServiceV2(db).ensure_indexes()
+    user_id = f"paper-smoke-dup-{uuid.uuid4().hex}"
+    portfolio = PortfolioServiceV2(db)
+    key = f"{user_id}:BTC-USD:BUY:e2e_paper_smoke:1m:2026-11-26T12:00:00+00:00"
+    order = {"status": "filled", "client_order_id": "dup-1", "idempotency_key": key, "simulation": True}
+
+    try:
+        await portfolio.record_trade_attempt(user_id, "BTC-USD", "BUY", order)
+        with pytest.raises(DuplicateKeyError):
+            await portfolio.record_trade_attempt(user_id, "BTC-USD", "BUY", {**order, "client_order_id": "dup-2"})
+        assert await db.trades_v2.count_documents({"user_id": user_id}) == 1
+    finally:
+        await cleanup_user(user_id=user_id)

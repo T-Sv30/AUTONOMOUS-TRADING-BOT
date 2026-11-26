@@ -2,8 +2,10 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from pymongo import UpdateOne
+from pymongo.errors import DuplicateKeyError
 
 from services.bot_engine import BotEngine
+from services.execution_control_v2 import ExecutionControlV2
 from services.market_data_service import MarketDataService, MarketDataUnavailable
 from services.risk_guard_v2 import RiskGuardV2
 
@@ -209,3 +211,81 @@ async def test_paper_fills_use_the_engine_market():
     market = MarketDataService(db=FakeDB(), source="simulated", clock=lambda: NOON)
     engine = BotEngine(FakeDB(), market=market)
     assert engine.execution.trading_service.adapter.market_data is market
+
+
+def build(side, snap):
+    return ExecutionControlV2.build_idempotency_key("u1", "BTC-USD", side, snap)
+
+
+def test_idempotency_key_differs_per_decision_candle():
+    snap = {"selected": {"strategy": "trend"}, "timeframe": "1m", "decision_candle_close": "2026-11-26T12:00:00+00:00"}
+    later = {**snap, "decision_candle_close": "2026-11-26T12:01:00+00:00"}
+    assert build("BUY", snap) != build("BUY", later)
+    assert build("BUY", snap) == build("BUY", dict(snap))
+
+
+def test_idempotency_key_requires_decision_time():
+    with pytest.raises(ValueError):
+        ExecutionControlV2.build_idempotency_key("u1", "BTC-USD", "BUY", {"selected": {"strategy": "t"}})
+
+
+def test_idempotency_key_includes_timeframe():
+    snap = {"selected": {"strategy": "trend"}, "timeframe": "1m", "decision_candle_close": "2026-11-26T12:00:00+00:00"}
+    assert build("BUY", snap) != build("BUY", {**snap, "timeframe": "1h"})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status,expected", [("filled", True), ("partially_filled", True), ("unknown", True), ("rejected", False)])
+async def test_any_non_rejected_attempt_counts_as_executed(status, expected):
+    db = FakeDB()
+    await db.trades_v2.insert_one({"idempotency_key": "k", "status": status})
+    assert await ExecutionControlV2(db).already_executed("k") is expected
+
+
+@pytest.mark.asyncio
+async def test_bot_can_buy_again_after_round_trip(monkeypatch):
+    monkeypatch.setenv("TRADING_MODE", "paper")
+    db = FakeDB()
+    db.bot_configs.docs.append({"user_id": "u1", "is_active": True, "symbols": ["BTC-USD"]})
+    clock = {"now": NOON}
+    engine = BotEngine(db, market=MarketDataService(db=db, source="simulated", clock=lambda: clock["now"]))
+
+    # The 300 s trade cooldown compares against wall-clock last_trade_at; let the guard see the same advance as the market clock.
+    started = datetime.now(UTC)
+    monkeypatch.setattr(RiskGuardV2, "utc_now", staticmethod(lambda: started + (clock["now"] - NOON)))
+
+    scripted = iter(["BUY", "SELL", "BUY"])
+
+    def build_plan(symbol, prices, has_position, base_notional=100.0):
+        return {"symbol": symbol, "action": next(scripted), "selected": {"strategy": "trend"}, "notional": 50.0}
+
+    monkeypatch.setattr(engine.planner, "build_plan", build_plan)
+    for step in range(3):
+        clock["now"] = NOON + timedelta(minutes=6 * step)
+        await engine.cycle("u1")
+
+    assert [t["side"] for t in db.trades_v2.docs if t["status"] == "filled"] == ["BUY", "SELL", "BUY"]
+    assert len({t["idempotency_key"] for t in db.trades_v2.docs}) == 3
+
+
+@pytest.mark.asyncio
+async def test_duplicate_trade_insert_records_no_fill(monkeypatch):
+    monkeypatch.setenv("TRADING_MODE", "paper")
+    db = FakeDB()
+    engine = BotEngine(db, market=MarketDataService(db=db, source="simulated", clock=lambda: NOON))
+
+    async def reject_duplicate(doc):
+        raise DuplicateKeyError("uniq_trade_idempotency_claim")
+
+    monkeypatch.setattr(db.trades_v2, "insert_one", reject_duplicate)
+    context = {
+        "action": "BUY",
+        "selected": {"strategy": "trend"},
+        "notional": 50.0,
+        "timeframe": "1m",
+        "decision_candle_close": NOON.isoformat(),
+    }
+    await engine.execute_buy("u1", "BTC-USD", 50.0, context)
+
+    assert db.positions_v2.docs == []
+    assert db.ledger_entries.docs == []

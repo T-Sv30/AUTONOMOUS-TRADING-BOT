@@ -36,6 +36,8 @@ class FakeCollection:
                     return False
                 if "$exists" in value and (key in doc) != value["$exists"]:
                     return False
+                if "$ne" in value and doc.get(key) == value["$ne"]:
+                    return False
             elif doc.get(key) != value:
                 return False
         return True
@@ -159,7 +161,9 @@ async def test_execution_control_locks_and_idempotency():
     third = await control.acquire_lock("user-1", "BTC-USD", "BUY")
     assert third["acquired"] is True
 
-    key = control.build_idempotency_key("user-1", "BTC-USD", "BUY", {"selected": {"strategy": "test"}})
+    snapshot = {"selected": {"strategy": "test"}, "timeframe": "1m", "decision_candle_close": "2026-11-26T12:00:00+00:00"}
+    key = control.build_idempotency_key("user-1", "BTC-USD", "BUY", snapshot)
+    assert key == "user-1:BTC-USD:BUY:test:1m:2026-11-26T12:00:00+00:00"
     assert await control.already_executed(key) is False
     await db.trades_v2.insert_one({"idempotency_key": key, "status": "filled"})
     assert await control.already_executed(key) is True
