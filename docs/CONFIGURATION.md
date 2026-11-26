@@ -94,3 +94,5 @@ MARKET_DATA_SOURCE=live
 ```
 
 `MARKET_DATA_SOURCE` accepts `live` (real Coinbase prices, default), `simulated` (deterministic fake prices for tests and CI) or `replay`. The older `SIMULATION_MODE` is deprecated; when only it is set, `True` maps to `simulated` and anything else to `live`, with a warning.
+
+`MARKET_DATA_REPLAY_EXCHANGE` (default `coinbase_exchange`) picks which stored candles `replay` reads, since simulated and exchange candles can share one collection. Use `simulation` to replay candles stored by the simulated source.

@@ -71,6 +71,7 @@ class MarketDataService:
         clock=None,
         session_factory=None,
         timeout_seconds: float | None = None,
+        replay_exchange: str | None = None,
     ):
         self.db = db
         self.source = parse_market_data_source(source) if source is not None else resolve_market_data_source()
@@ -81,6 +82,7 @@ class MarketDataService:
             if timeout_seconds is not None
             else float(os.getenv("MARKET_DATA_TIMEOUT_SECONDS", "10"))
         )
+        self.replay_exchange = replay_exchange or os.getenv("MARKET_DATA_REPLAY_EXCHANGE") or "coinbase_exchange"
         self._session = None
         self.base_url = os.getenv("COINBASE_EXCHANGE_URL", "https://api.exchange.coinbase.com")
         self.seed = seed if seed is not None else os.getenv("SIMULATION_SEED", "autonomous-trading-bot")
@@ -184,7 +186,7 @@ class MarketDataService:
             raise MarketDataUnavailable(f"Market data unavailable for {symbol}") from exc
 
     async def _replay_price_data(self, symbol: str) -> dict[str, Any]:
-        stored = await self.get_stored_candles(symbol, limit=1)
+        stored = await self.get_stored_candles(symbol, limit=1, exchange=self.replay_exchange)
         if not stored:
             raise MarketDataUnavailable(f"No stored candles to replay for {symbol}")
         last = stored[-1]
@@ -238,7 +240,7 @@ class MarketDataService:
             return []
         self.granularity_for(timeframe)
         if self.source == "replay":
-            stored = await self.get_stored_candles(symbol, timeframe=timeframe, limit=periods)
+            stored = await self.get_stored_candles(symbol, timeframe=timeframe, limit=periods, exchange=self.replay_exchange)
             if not stored:
                 raise MarketDataUnavailable(f"No stored candles to replay for {symbol}")
             return stored
@@ -369,12 +371,17 @@ class MarketDataService:
         if ops:
             await collection.bulk_write(ops, ordered=False)
 
-    async def get_stored_candles(self, symbol: str, timeframe: str = "1m", limit: int = 100) -> list[dict[str, Any]]:
+    async def get_stored_candles(
+        self, symbol: str, timeframe: str = "1m", limit: int = 100, exchange: str | None = None
+    ) -> list[dict[str, Any]]:
         if self.db is None:
             raise MarketDataUnavailable("No database handle configured for stored candle retrieval")
         self.granularity_for(timeframe)
+        query = {"symbol": symbol, "timeframe": timeframe}
+        if exchange is not None:
+            query["exchange"] = exchange
         cursor = (
-            self.db.market_candles.find({"symbol": symbol, "timeframe": timeframe}, {"_id": 0})
+            self.db.market_candles.find(query, {"_id": 0})
             .sort("open_time", -1)
             .limit(limit)
         )
