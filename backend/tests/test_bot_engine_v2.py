@@ -1,7 +1,7 @@
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from pymongo import UpdateOne
+from fakes import FakeDB
 from pymongo.errors import DuplicateKeyError
 
 from services.bot_engine import BotEngine
@@ -10,112 +10,6 @@ from services.market_data_service import MarketDataService, MarketDataUnavailabl
 from services.risk_guard_v2 import RiskGuardV2
 
 NOON = datetime(2026, 11, 26, 12, 0, tzinfo=UTC)
-
-
-def _matches(doc, query):
-    for key, cond in query.items():
-        if key == "$or":
-            if not any(_matches(doc, sub) for sub in cond):
-                return False
-        elif isinstance(cond, dict):
-            value = doc.get(key)
-            for op, operand in cond.items():
-                if op == "$exists" and (key in doc) != operand:
-                    return False
-                if op == "$lte" and not (value is not None and value <= operand):
-                    return False
-                if op == "$gte" and not (value is not None and value >= operand):
-                    return False
-                if op == "$in" and value not in operand:
-                    return False
-                if op == "$ne" and value == operand:
-                    return False
-        elif doc.get(key) != cond:
-            return False
-    return True
-
-
-def _apply_update(doc, update):
-    for key, value in update.get("$set", {}).items():
-        doc[key] = value
-    for key, value in update.get("$inc", {}).items():
-        doc[key] = doc.get(key, 0) + value
-
-
-class FakeCursor:
-    def __init__(self, docs):
-        self.docs = docs
-
-    def sort(self, key, direction=1):
-        self.docs = sorted(self.docs, key=lambda doc: doc.get(key, ""), reverse=direction < 0)
-        return self
-
-    def limit(self, limit):
-        self.docs = self.docs[:limit]
-        return self
-
-    async def to_list(self, limit):
-        return self.docs[:limit]
-
-
-class FakeCollection:
-    def __init__(self):
-        self.docs = []
-        self.bulk_calls = []
-
-    async def find_one(self, query, projection=None, sort=None):
-        matches = [doc for doc in self.docs if _matches(doc, query)]
-        if sort:
-            key, direction = sort[0]
-            matches.sort(key=lambda doc: doc.get(key, ""), reverse=direction < 0)
-        return dict(matches[0]) if matches else None
-
-    async def insert_one(self, doc):
-        self.docs.append(dict(doc))
-
-    async def update_one(self, query, update, upsert=False):
-        doc = next((d for d in self.docs if _matches(d, query)), None)
-        if doc is None:
-            if not upsert:
-                return
-            doc = {k: v for k, v in query.items() if not k.startswith("$") and not isinstance(v, dict)}
-            self.docs.append(doc)
-        _apply_update(doc, update)
-
-    async def update_many(self, query, update):
-        for doc in self.docs:
-            if _matches(doc, query):
-                _apply_update(doc, update)
-
-    async def find_one_and_update(self, query, update, upsert=False, return_document=None, projection=None):
-        await self.update_one(query, update, upsert=upsert)
-        return await self.find_one({k: v for k, v in query.items() if not k.startswith("$")})
-
-    async def bulk_write(self, ops, ordered=True):
-        self.bulk_calls.append((list(ops), ordered))
-        for op in ops:
-            assert isinstance(op, UpdateOne)
-            await self.update_one(op._filter, op._doc, upsert=True)
-
-    async def delete_one(self, query):
-        self.docs = [doc for doc in self.docs if not _matches(doc, query)]
-
-    def find(self, query, projection=None):
-        return FakeCursor([dict(doc) for doc in self.docs if _matches(doc, query)])
-
-    async def count_documents(self, query):
-        return len([doc for doc in self.docs if _matches(doc, query)])
-
-
-class FakeDB:
-    """In-memory Mongo stand-in shared by bot-engine tests; collections appear on demand."""
-
-    def __getattr__(self, name):
-        if name.startswith("_"):
-            raise AttributeError(name)
-        collection = FakeCollection()
-        setattr(self, name, collection)
-        return collection
 
 
 @pytest.mark.asyncio
