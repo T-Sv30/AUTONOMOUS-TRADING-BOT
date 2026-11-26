@@ -2,6 +2,8 @@ import asyncio
 import logging
 from datetime import UTC, datetime
 
+from pymongo.errors import DuplicateKeyError
+
 from services.alert_service import AlertService
 from services.execution_control_v2 import ExecutionControlV2
 from services.execution_service_v2 import ExecutionServiceV2
@@ -106,10 +108,14 @@ class BotEngine:
         await self.alerts.emit(user_id, "market_data_failed", "warning", f"Market data unavailable for {symbol}", {"symbol": symbol, "error": str(exc)})
 
     async def process_symbol(self, user_id, symbol, positions, state, risk: RiskGuardV2, price_map):
-        hist = await self.market.get_historical_data(symbol, periods=120)
+        timeframe = "1m"
+        hist = await self.market.get_historical_data(symbol, periods=120, timeframe=timeframe)
         prices = [h["price"] for h in hist if h.get("price")]
         position = next((p for p in positions if p["symbol"] == symbol), None)
         plan = self.planner.build_plan(symbol, prices, has_position=bool(position))
+        # The idempotency key is per decision: the last closed candle the plan was built from.
+        plan["timeframe"] = timeframe
+        plan["decision_candle_close"] = hist[-1]["timestamp"] if hist else None
 
         if plan["action"] == "BUY" and not position:
             metrics = risk.portfolio_metrics(state, positions, {**price_map, symbol: prices[-1] if prices else 0.0})
@@ -143,7 +149,12 @@ class BotEngine:
         try:
             order = await self.execution.buy(symbol, notional, signal_snapshot=context, idempotency_key=idempotency_key)
             order["idempotency_key"] = idempotency_key
-            await self.portfolio.record_trade_attempt(user_id, symbol, "BUY", order, context)
+            try:
+                await self.portfolio.record_trade_attempt(user_id, symbol, "BUY", order, context)
+            except DuplicateKeyError:
+                # Backstop behind the lock and already_executed: another attempt already claimed this key.
+                log_event(logger, logging.WARNING, "duplicate_order_skipped", user_id=user_id, symbol=symbol, side="BUY", idempotency_key=idempotency_key)
+                return
             if not order.get("success"):
                 log_event(logger, logging.ERROR, "execution_failed", user_id=user_id, symbol=symbol, side="BUY", order=order)
                 await self.alerts.emit(user_id, "execution_failed", "error", f"Buy failed for {symbol}", order)
@@ -155,7 +166,7 @@ class BotEngine:
         finally:
             await self.execution_control.release_lock(lock["key"])
 
-    async def execute_sell(self, user_id, symbol, position, context=None):
+    async def execute_sell(self, user_id, symbol, position, context):
         try:
             self.mode.assert_can_trade()
         except TradingModeError as exc:
@@ -163,7 +174,6 @@ class BotEngine:
             await self.alerts.emit(user_id, "execution_mode_blocked", "warning", str(exc), {"symbol": symbol, "side": "SELL"})
             return
 
-        context = context or {"position": position}
         idempotency_key = self.execution_control.build_idempotency_key(user_id, symbol, "SELL", context)
         if await self.execution_control.already_executed(idempotency_key):
             log_event(logger, logging.INFO, "duplicate_order_skipped", user_id=user_id, symbol=symbol, side="SELL")
@@ -177,7 +187,12 @@ class BotEngine:
         try:
             order = await self.execution.sell(symbol, position["base_units"], idempotency_key=idempotency_key)
             order["idempotency_key"] = idempotency_key
-            await self.portfolio.record_trade_attempt(user_id, symbol, "SELL", order, context)
+            try:
+                await self.portfolio.record_trade_attempt(user_id, symbol, "SELL", order, context)
+            except DuplicateKeyError:
+                # Backstop behind the lock and already_executed: another attempt already claimed this key.
+                log_event(logger, logging.WARNING, "duplicate_order_skipped", user_id=user_id, symbol=symbol, side="SELL", idempotency_key=idempotency_key)
+                return
             if not order.get("success"):
                 log_event(logger, logging.ERROR, "execution_failed", user_id=user_id, symbol=symbol, side="SELL", order=order)
                 await self.alerts.emit(user_id, "execution_failed", "error", f"Sell failed for {symbol}", order)

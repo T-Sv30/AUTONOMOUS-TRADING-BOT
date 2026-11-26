@@ -94,6 +94,9 @@ class PortfolioServiceV2:
             "created_at": now,
             "filled_at": now if order.get("status") in {"filled", "partially_filled"} else None,
         }
+        if trade["status"] != "rejected" and trade["idempotency_key"]:
+            # Claims the key in the uniq_trade_idempotency_claim partial index (partial indexes cannot filter on $ne).
+            trade["idempotency_claim"] = True
         await self.db.trades_v2.insert_one(trade)
 
     async def get_trades(self, user_id: str, limit: int = 100) -> list[dict[str, Any]]:

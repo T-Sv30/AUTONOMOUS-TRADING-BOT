@@ -17,6 +17,13 @@ class MongoIndexServiceV2:
         await create(self.db.market_candles, [("symbol", 1), ("exchange", 1), ("timeframe", 1), ("open_time", 1)], unique=True, name="uniq_market_candle")
         await create(self.db.trades_v2, [("user_id", 1), ("created_at", -1)], name="trades_user_created")
         await create(self.db.trades_v2, [("client_order_id", 1)], sparse=True, name="trades_client_order_id")
+        await create(
+            self.db.trades_v2,
+            [("idempotency_key", 1)],
+            unique=True,
+            partialFilterExpression={"idempotency_claim": True},
+            name="uniq_trade_idempotency_claim",
+        )
         await create(self.db.positions_v2, [("user_id", 1), ("symbol", 1)], unique=True, name="uniq_position_user_symbol")
         await create(self.db.portfolio_state, [("user_id", 1)], unique=True, name="uniq_portfolio_state_user")
         await create(self.db.ledger_entries, [("user_id", 1), ("created_at", -1)], name="ledger_user_created")

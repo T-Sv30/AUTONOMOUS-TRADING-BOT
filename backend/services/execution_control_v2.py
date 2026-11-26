@@ -20,10 +20,16 @@ class ExecutionControlV2:
 
     @staticmethod
     def build_idempotency_key(user_id: str, symbol: str, side: str, signal_snapshot: dict[str, Any] | None = None) -> str:
+        """One key per decision: the same strategy may trade again on a later closed candle."""
         signal_snapshot = signal_snapshot or {}
         strategy = signal_snapshot.get("selected", {}).get("strategy") or signal_snapshot.get("strategy", "unknown")
-        action = signal_snapshot.get("action", side)
-        return f"{user_id}:{symbol}:{side}:{action}:{strategy}"
+        timeframe = signal_snapshot.get("timeframe")
+        if not timeframe:
+            raise ValueError("signal_snapshot.timeframe is required")
+        decision_candle_close = signal_snapshot.get("decision_candle_close")
+        if not decision_candle_close:
+            raise ValueError("signal_snapshot.decision_candle_close is required")
+        return f"{user_id}:{symbol}:{side}:{strategy}:{timeframe}:{decision_candle_close}"
 
     async def acquire_lock(self, user_id: str, symbol: str, side: str) -> dict[str, Any]:
         key = f"{user_id}:{symbol}:{side}"
@@ -71,5 +77,6 @@ class ExecutionControlV2:
         await self.db.execution_locks.delete_one({"key": key})
 
     async def already_executed(self, idempotency_key: str) -> bool:
-        existing = await self.db.trades_v2.find_one({"idempotency_key": idempotency_key, "status": "filled"}, {"_id": 0})
+        # Any attempt that was not rejected may have reached the venue, so it blocks a retry.
+        existing = await self.db.trades_v2.find_one({"idempotency_key": idempotency_key, "status": {"$ne": "rejected"}}, {"_id": 0})
         return existing is not None
