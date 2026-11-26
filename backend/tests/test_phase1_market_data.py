@@ -1,3 +1,4 @@
+import asyncio
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -146,3 +147,112 @@ async def test_overlapping_windows_share_candles():
 async def test_simulated_ticker_has_bid_below_ask():
     t = await sim(NOON).get_current_price("BTC-USD")
     assert t["bid"] < t["price"] < t["ask"]
+
+
+class FakeResponse:
+    def __init__(self, payload, status=200):
+        self.status = status
+        self._payload = payload
+
+    async def json(self):
+        return self._payload
+
+
+class FakeGet:
+    def __init__(self, response=None, error=None):
+        self._response = response
+        self._error = error
+
+    async def __aenter__(self):
+        if self._error:
+            raise self._error
+        return self._response
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+class FakeSession:
+    """Stands in for aiohttp.ClientSession: get() is an async context manager."""
+
+    def __init__(self, ticker=None, rows=None, error=None, status=200, **kwargs):
+        self.kwargs = kwargs
+        self.ticker = ticker
+        self.rows = rows
+        self.error = error
+        self.status = status
+        self.closed = False
+
+    def get(self, url, params=None):
+        payload = self.rows if url.endswith("/candles") else self.ticker
+        return FakeGet(FakeResponse(payload, self.status), self.error)
+
+    async def close(self):
+        self.closed = True
+
+
+def candle_rows(count=130):
+    """Newest first: an open candle (opened 30s ago), then closed whole-minute candles."""
+    times = [NOON - timedelta(seconds=30)] + [NOON - timedelta(minutes=k) for k in range(1, count)]
+    return [[int(t.timestamp()), 99.0, 101.0, 100.0, 100.5, 1.5] for t in times]
+
+
+def live(ticker=None, rows=None, built=None, **session_kwargs):
+    sessions = built if built is not None else []
+
+    def factory(**kwargs):
+        session = FakeSession(ticker=ticker, rows=rows, kwargs=kwargs, **session_kwargs)
+        sessions.append(session)
+        return session
+
+    return MarketDataService(source="live", clock=lambda: NOON, session_factory=factory)
+
+
+@pytest.mark.asyncio
+async def test_live_requests_share_one_session_with_timeout():
+    built = []
+    svc = live(ticker={"price": "100"}, rows=candle_rows(), built=built)
+    await svc.get_current_price("BTC-USD")
+    await svc.get_candles("BTC-USD", periods=5)
+    assert len(built) == 1
+    assert built[0].kwargs["timeout"].total == 10
+
+
+@pytest.mark.asyncio
+async def test_close_closes_the_shared_session():
+    built = []
+    svc = live(ticker={"price": "100"}, built=built)
+    await svc.close()
+    await svc.get_current_price("BTC-USD")
+    await svc.close()
+    assert built[0].closed
+
+
+@pytest.mark.asyncio
+async def test_live_candles_exclude_the_open_candle():
+    candles = await live(rows=candle_rows()).get_candles("BTC-USD", periods=5)
+    assert len(candles) == 5
+    assert all(MarketDataService.parse_timestamp(c["close_time"]) <= NOON for c in candles)
+
+
+@pytest.mark.asyncio
+async def test_live_candles_return_requested_count_of_closed_candles():
+    candles = await live(rows=candle_rows()).get_candles("BTC-USD", periods=120)
+    assert len(candles) == 120
+
+
+@pytest.mark.asyncio
+async def test_live_ticker_carries_bid_and_ask():
+    ticker = {"price": "100", "bid": "99.9", "ask": "100.1", "volume": "5"}
+    t = await live(ticker=ticker).get_current_price("BTC-USD")
+    assert (t["bid"], t["ask"]) == (99.9, 100.1)
+    assert t["timestamp"] == NOON.isoformat()
+
+
+@pytest.mark.asyncio
+async def test_live_timeout_becomes_market_data_unavailable():
+    svc = live(error=asyncio.TimeoutError())
+    with pytest.raises(MarketDataUnavailable):
+        await svc.get_current_price("BTC-USD")
+    with pytest.raises(MarketDataUnavailable):
+        await svc.get_candles("BTC-USD", periods=5)
