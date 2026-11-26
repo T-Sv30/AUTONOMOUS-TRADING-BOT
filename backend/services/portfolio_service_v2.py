@@ -112,7 +112,10 @@ class PortfolioServiceV2:
         total_equity = cash_balance + positions_value
         max_equity = max(float(state.get("equity_high", total_equity)), total_equity)
         today = (now or datetime.now(UTC)).astimezone(UTC).date().isoformat()
-        daily_start_equity = float(state.get("daily_start_equity", max_equity))  # THROWAWAY: baseline never rolls
+        if state.get("daily_start_date") != today:
+            daily_start_equity = total_equity  # first snapshot of a new UTC day (or a legacy state without a date)
+        else:
+            daily_start_equity = float(state.get("daily_start_equity", max_equity))
         current_drawdown = (max_equity - total_equity) / max_equity if max_equity > 0 else 0.0
         daily_pnl = total_equity - daily_start_equity
         now = self.utc_now()
