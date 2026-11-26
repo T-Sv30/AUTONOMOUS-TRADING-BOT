@@ -16,7 +16,7 @@ class BotConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
     user_id: str = ""
     is_active: bool = False
-    capital_floor: float = 0.97
+    capital_floor: float | None = None  # deprecated and ignored; drawdown is the only equity halt
     max_daily_loss: float = 0.015
     risk_target_vol: float = 0.10
     symbols: list[str] = Field(default_factory=lambda: ["BTC-USD", "ETH-USD"])

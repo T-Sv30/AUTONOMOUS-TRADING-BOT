@@ -62,7 +62,7 @@ class BotEngine:
         await self.portfolio.ensure_account_state(user_id)
         symbols = config.get("symbols", ["BTC-USD"])
         price_map = await self.get_price_map(user_id, symbols)
-        snapshot = await self.portfolio.update_risk_snapshot(user_id, price_map, now=self._now())
+        snapshot = await self.portfolio.update_risk_snapshot(user_id, price_map, now=self._now(), max_drawdown_pct=risk.max_drawdown_pct)
         state = await self.db.portfolio_state.find_one({"user_id": user_id}) or {}
         positions = await self.portfolio.get_positions(user_id)
         metrics = risk.portfolio_metrics(state, positions, price_map)
@@ -125,7 +125,7 @@ class BotEngine:
             metrics = risk.portfolio_metrics(state, positions, {**price_map, symbol: prices[-1] if prices else 0.0})
             guard = risk.can_open_position(metrics, positions, plan.get("notional", 0.0), state.get("last_trade_at"))
             if guard["allowed"]:
-                await self.execute_buy(user_id, symbol, plan.get("notional", 0.0), plan)
+                await self.execute_buy(user_id, symbol, guard["notional"], plan)
             else:
                 log_event(logger, logging.INFO, "buy_blocked", user_id=user_id, symbol=symbol, reason=guard.get("reason"))
 

@@ -12,7 +12,6 @@ class RiskGuardV2:
         max_open_positions: int = 3,
         max_daily_loss_pct: float = 0.03,
         max_drawdown_pct: float = 0.05,
-        capital_floor_pct: float = 0.97,
         cooldown_seconds: int = 300,
     ):
         self.max_position_notional = max_position_notional
@@ -20,7 +19,6 @@ class RiskGuardV2:
         self.max_open_positions = max_open_positions
         self.max_daily_loss_pct = max_daily_loss_pct
         self.max_drawdown_pct = max_drawdown_pct
-        self.capital_floor_pct = capital_floor_pct
         self.cooldown_seconds = cooldown_seconds
 
     @classmethod
@@ -32,7 +30,6 @@ class RiskGuardV2:
             max_open_positions=int(config.get("max_open_positions", 3)),
             max_daily_loss_pct=float(config.get("max_daily_loss", config.get("max_daily_loss_pct", 0.03))),
             max_drawdown_pct=float(config.get("max_drawdown_pct", 0.05)),
-            capital_floor_pct=float(config.get("capital_floor", config.get("capital_floor_pct", 0.97))),
             cooldown_seconds=int(config.get("cooldown_seconds", 300)),
         )
 
@@ -52,7 +49,7 @@ class RiskGuardV2:
 
         total_equity = cash + market_value
         equity_high = max(equity_high, total_equity)
-        capital_floor_value = equity_high * self.capital_floor_pct
+        capital_floor_value = equity_high * (1 - self.max_drawdown_pct)  # display only; drawdown is the one equity halt
 
         daily_loss_pct = max(0.0, (daily_start_equity - total_equity) / daily_start_equity) if daily_start_equity > 0 else 0.0
         drawdown_pct = max(0.0, (equity_high - total_equity) / equity_high) if equity_high > 0 else 0.0
@@ -71,8 +68,6 @@ class RiskGuardV2:
         }
 
     def should_kill_switch(self, metrics: dict[str, float]) -> dict[str, Any]:
-        if metrics["total_equity"] <= metrics.get("capital_floor_value", 0.0):
-            return {"triggered": True, "reason": "capital floor breached"}
         if metrics["daily_loss_pct"] >= self.max_daily_loss_pct:
             return {"triggered": True, "reason": f"daily loss limit breached ({metrics['daily_loss_pct']:.2%})"}
         if metrics["drawdown_pct"] >= self.max_drawdown_pct:
@@ -91,14 +86,13 @@ class RiskGuardV2:
             return {"allowed": False, "reason": kill["reason"]}
         if proposed_notional <= 0:
             return {"allowed": False, "reason": "invalid proposed notional"}
-        if proposed_notional > self.max_position_notional:
-            return {"allowed": False, "reason": "position notional exceeds limit"}
+        notional = min(proposed_notional, self.max_position_notional)
         if len(positions) >= self.max_open_positions:
             return {"allowed": False, "reason": "max open positions reached"}
         if metrics["total_equity"] <= 0:
             return {"allowed": False, "reason": "invalid equity"}
 
-        projected_exposure = metrics["exposure_pct"] + (proposed_notional / metrics["total_equity"])
+        projected_exposure = metrics["exposure_pct"] + (notional / metrics["total_equity"])
         if projected_exposure > self.max_total_exposure_pct:
             return {"allowed": False, "reason": "total exposure limit exceeded"}
 
@@ -110,4 +104,4 @@ class RiskGuardV2:
             except Exception as exc:
                 logger.warning("Ignoring unparseable last_trade_at %r for cooldown check: %s", last_trade_at_iso, exc)
 
-        return {"allowed": True, "reason": "ok"}
+        return {"allowed": True, "reason": "ok", "notional": notional}

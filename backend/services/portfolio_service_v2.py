@@ -103,7 +103,7 @@ class PortfolioServiceV2:
     async def get_trades(self, user_id: str, limit: int = 100) -> list[dict[str, Any]]:
         return await self.db.trades_v2.find({"user_id": user_id}, {"_id": 0}).sort("created_at", -1).limit(limit).to_list(limit)
 
-    async def update_risk_snapshot(self, user_id: str, price_map: dict[str, float] | None = None, now: datetime | None = None) -> dict[str, Any]:
+    async def update_risk_snapshot(self, user_id: str, price_map: dict[str, float] | None = None, now: datetime | None = None, max_drawdown_pct: float = 0.05) -> dict[str, Any]:
         state = await self.ensure_account_state(user_id)
         positions = await self.mark_positions(user_id, price_map)
 
@@ -124,7 +124,7 @@ class PortfolioServiceV2:
             "user_id": user_id,
             "total_equity": round(total_equity, 8),
             "max_equity": round(max_equity, 8),
-            "equity_floor": round(max_equity * 0.97, 8),
+            "equity_floor": round(max_equity * (1 - max_drawdown_pct), 8),
             "current_drawdown": round(current_drawdown, 8),
             "daily_pnl": round(daily_pnl, 8),
             "positions_value": round(positions_value, 8),
