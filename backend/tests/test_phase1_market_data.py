@@ -263,6 +263,13 @@ async def test_live_ticker_carries_bid_and_ask():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("ticker", [{"price": "100"}, {"price": "100", "bid": "", "ask": None}])
+async def test_live_ticker_without_bid_or_ask_reports_none_not_last_price(ticker):
+    t = await live(ticker=ticker).get_current_price("BTC-USD")
+    assert t["bid"] is None and t["ask"] is None
+
+
+@pytest.mark.asyncio
 async def test_live_timeout_becomes_market_data_unavailable():
     svc = live(error=TimeoutError())
     with pytest.raises(MarketDataUnavailable):
