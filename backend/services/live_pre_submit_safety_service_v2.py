@@ -96,7 +96,24 @@ class LivePreSubmitSafetyServiceV2:
         except LivePreSubmitSafetyError as exc:
             return {"allowed": False, "reason": str(exc)}
 
+    HALT_SCOPES = ("user", "global")
+
     async def create_halt(self, *, user_id: str | None, scope: str, reason: str, created_by: str = "system") -> dict[str, Any]:
         record = {"scope": scope, "user_id": user_id, "reason": reason, "active": True, "created_by": created_by, "created_at": self.utc_now().isoformat()}
         await self.db.live_halts.insert_one(dict(record))  # copy: insert_one adds an ObjectId _id that breaks JSON responses
         return record
+
+    async def release_halts(self, *, user_id: str | None, scope: str, released_by: str) -> int:
+        """Deactivate active halts of one scope. Returns how many were released."""
+        if scope not in self.HALT_SCOPES:
+            raise ValueError(f"halt scope must be one of {self.HALT_SCOPES}")
+        query: dict[str, Any] = {"scope": scope, "active": True}
+        if scope == "user":
+            if not user_id:
+                raise ValueError("user_id is required to release a user halt")
+            query["user_id"] = user_id
+        result = await self.db.live_halts.update_many(
+            query,
+            {"$set": {"active": False, "released_at": self.utc_now().isoformat(), "released_by": released_by}},
+        )
+        return int(getattr(result, "modified_count", 0) or 0)

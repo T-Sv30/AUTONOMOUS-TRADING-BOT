@@ -42,7 +42,7 @@ class ScopeEnforcementMiddlewareV2(BaseHTTPMiddleware):
         if path == "/api/ops/indexes/ensure":
             return Scope.OPS_INDEXES.value
 
-        if path == "/api/ops/emergency-halt":
+        if path in {"/api/ops/emergency-halt", "/api/ops/emergency-halt/release"}:
             return Scope.OPS_HALT.value
 
         return None

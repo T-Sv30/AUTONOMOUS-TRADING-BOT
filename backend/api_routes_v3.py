@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from typing import Literal
 
 from fastapi import Depends, HTTPException
 from pydantic import BaseModel, Field, StrictBool
@@ -12,6 +13,7 @@ from services.backtesting_service_v2 import BacktestConfig, BacktestingServiceV2
 from services.coinbase_live_execution_adapter_v2 import CoinbaseLiveExecutionError
 from services.coinbase_readonly_adapter_v2 import CoinbaseReadonlyError
 from services.ledger_service_v2 import LedgerServiceV2
+from services.live_pre_submit_safety_service_v2 import LivePreSubmitSafetyServiceV2
 from services.live_readonly_service_v2 import LiveReadonlyServiceV2
 from services.live_trading_gate_v2 import LiveTradingGateV2
 from services.live_trading_service_v2 import LiveTradingServiceV2
@@ -102,13 +104,25 @@ class PilotSignoffRequest(BaseModel):
 
 class EmergencyHaltRequest(BaseModel):
     reason: str = Field(default="operator emergency halt")
+    # "global" halts live orders for every user and needs an ops admin.
+    scope: Literal["user", "global"] = "user"
+
+
+class EmergencyHaltReleaseRequest(BaseModel):
+    scope: Literal["user", "global"] = "user"
+    # For a user halt: whose halt to release. Defaults to the caller.
+    user_id: str | None = None
+
+
+def is_ops_admin(user: dict) -> bool:
+    if DEBUG and not OPS_ADMIN_ENABLED:
+        return True
+    email = str(user.get("email", "")).lower().strip()
+    return bool(OPS_ADMIN_ENABLED and email in OPS_ADMIN_EMAILS)
 
 
 async def require_ops_admin(current_user: dict = Depends(get_current_user)):
-    if DEBUG and not OPS_ADMIN_ENABLED:
-        return current_user
-    email = str(current_user.get("email", "")).lower().strip()
-    if OPS_ADMIN_ENABLED and email in OPS_ADMIN_EMAILS:
+    if is_ops_admin(current_user):
         return current_user
     raise HTTPException(status_code=403, detail="Admin privileges required")
 
@@ -300,7 +314,25 @@ async def ensure_mongo_indexes(current_user: dict = Depends(require_ops_admin)):
 
 @api_router.post("/ops/emergency-halt")
 async def emergency_halt(request: EmergencyHaltRequest, current_user: dict = Depends(get_current_user)):
+    if request.scope == "global" and not is_ops_admin(current_user):
+        raise HTTPException(status_code=403, detail="Admin privileges required for a global halt")
     now = datetime.now(UTC).isoformat()
     result = await db.bot_configs.update_many({"user_id": current_user["id"]}, {"$set": {"is_active": False, "halt_reason": request.reason, "updated_at": now}})
-    await AlertService(db).emit(current_user["id"], "operator_emergency_halt", "critical", f"Emergency halt triggered: {request.reason}", {"modified_count": getattr(result, "modified_count", None), "reason": request.reason})
-    return {"status": "halted", "reason": request.reason, "modified_count": getattr(result, "modified_count", None), "timestamp": now}
+    # The live_halts record survives restarts and blocks every later live order until an ops admin releases it.
+    halt = await LivePreSubmitSafetyServiceV2(db).create_halt(
+        user_id=None if request.scope == "global" else current_user["id"],
+        scope=request.scope,
+        reason=request.reason,
+        created_by=current_user["id"],
+    )
+    await AlertService(db).emit(current_user["id"], "operator_emergency_halt", "critical", f"Emergency halt triggered: {request.reason}", {"modified_count": getattr(result, "modified_count", None), "reason": request.reason, "scope": request.scope})
+    return {"status": "halted", "reason": request.reason, "scope": request.scope, "halt": halt, "modified_count": getattr(result, "modified_count", None), "timestamp": now}
+
+
+@api_router.post("/ops/emergency-halt/release")
+async def release_emergency_halt(request: EmergencyHaltReleaseRequest, current_user: dict = Depends(require_ops_admin)):
+    now = datetime.now(UTC).isoformat()
+    target_user_id = None if request.scope == "global" else (request.user_id or current_user["id"])
+    released = await LivePreSubmitSafetyServiceV2(db).release_halts(user_id=target_user_id, scope=request.scope, released_by=current_user["id"])
+    await AlertService(db).emit(current_user["id"], "operator_emergency_halt_released", "warning", f"Emergency halt released ({request.scope})", {"scope": request.scope, "user_id": target_user_id, "released_count": released})
+    return {"status": "released", "scope": request.scope, "user_id": target_user_id, "released_count": released, "timestamp": now}
