@@ -111,7 +111,7 @@ class PortfolioServiceV2:
         positions_value = sum(float(position.get("market_value", 0.0)) for position in positions)
         total_equity = cash_balance + positions_value
         max_equity = max(float(state.get("equity_high", total_equity)), total_equity)
-        today = (now or datetime.now(UTC)).astimezone(UTC).date().isoformat()
+        today = state.get("daily_start_date") or (now or datetime.now(UTC)).astimezone(UTC).date().isoformat()  # THROWAWAY: never roll
         if state.get("daily_start_date") != today:
             daily_start_equity = total_equity  # first snapshot of a new UTC day (or a legacy state without a date)
         else:
