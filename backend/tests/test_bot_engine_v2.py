@@ -356,6 +356,7 @@ async def test_oversized_buy_plan_is_clipped_to_the_cap_and_fills(monkeypatch):
     filled = [t for t in db.trades_v2.docs if t["status"] == "filled"]
     assert len(filled) == 1
     assert filled[0]["notional_usd"] == pytest.approx(100.0, rel=0.01)
+    assert filled[0]["signal_snapshot"]["notional"] == 100.0
 
 
 @pytest.mark.asyncio
@@ -386,3 +387,34 @@ async def test_trade_cooldown_runs_on_the_market_clock(monkeypatch):
     assert await filled_sides_after(120) == ["BUY", "SELL"]
     # 301 scripted seconds after the sell: the cooldown has passed on the market clock.
     assert await filled_sides_after(361) == ["BUY", "SELL", "BUY"]
+
+
+@pytest.mark.asyncio
+async def test_realized_pnl_lands_on_the_filled_sell_not_the_rejected_retry(monkeypatch):
+    monkeypatch.setenv("TRADING_MODE", "paper")
+    db = FakeDB()
+    engine = BotEngine(db, market=MarketDataService(db=db, source="simulated", clock=lambda: NOON))
+    buy_context = {"action": "BUY", "selected": {"strategy": "trend"}, "notional": 50.0, "timeframe": "1m", "decision_candle_close": NOON.isoformat()}
+    await engine.execute_buy("u1", "BTC-USD", 50.0, buy_context)
+    position = dict(db.positions_v2.docs[0])
+
+    real_sell = engine.execution.sell
+    calls = []
+
+    async def sell(symbol, units, idempotency_key=None):
+        order = await real_sell(symbol, units, idempotency_key=idempotency_key)
+        calls.append(order["client_order_id"])
+        if len(calls) == 1:
+            return {**order, "success": False, "status": "rejected"}
+        return order
+
+    monkeypatch.setattr(engine.execution, "sell", sell)
+    sell_context = {"action": "SELL", "selected": {"strategy": "trend"}, "timeframe": "1m", "decision_candle_close": (NOON + timedelta(minutes=1)).isoformat()}
+    await engine.execute_sell("u1", "BTC-USD", position, sell_context)
+    await engine.execute_sell("u1", "BTC-USD", position, sell_context)
+
+    assert calls[0] == calls[1]
+    sells = [t for t in db.trades_v2.docs if t["side"] == "SELL"]
+    assert [t["status"] for t in sells] == ["rejected", "filled"]
+    assert "realized_pnl" not in sells[0]
+    assert "realized_pnl" in sells[1]

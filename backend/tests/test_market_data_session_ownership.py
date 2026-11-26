@@ -37,9 +37,22 @@ async def test_adapter_leaves_injected_market_data_open():
 @pytest.mark.parametrize("fail", [False, True])
 async def test_market_data_route_closes_its_per_request_service(monkeypatch, fail):
     svc = ClosableMarket(fail=fail)
-    monkeypatch.setattr(api_routes_v2, "MarketDataService", lambda: svc)
+    monkeypatch.setattr(api_routes_v2, "MarketDataService", lambda **kwargs: svc)
     try:
         await api_routes_v2.get_market_data("BTC-USD", current_user={"id": "u"})
     except Exception:
         assert fail
     assert svc.closed
+
+
+@pytest.mark.asyncio
+async def test_market_data_route_gives_the_service_the_database(monkeypatch):
+    seen = []
+
+    def factory(*args, **kwargs):
+        seen.append(kwargs)
+        return ClosableMarket()
+
+    monkeypatch.setattr(api_routes_v2, "MarketDataService", factory)
+    await api_routes_v2.get_market_data("BTC-USD", current_user={"id": "u"})
+    assert seen == [{"db": api_routes_v2.db}]

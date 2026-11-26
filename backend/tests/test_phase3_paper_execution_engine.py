@@ -188,3 +188,21 @@ async def test_extra_slippage_is_optional_and_small(monkeypatch):
     adapter = PaperExecutionAdapterV2(market_data=quote, config=PaperExecutionAdapterV2.from_env())
     assert (await adapter.place_market_buy("BTC-USD", 50.0))["filled_price"] == pytest.approx(100.1 * 1.0001)
     assert (await adapter.place_market_sell("BTC-USD", 1.0))["filled_price"] == pytest.approx(99.9 * 0.9999)
+
+
+@pytest.mark.parametrize("name", ["PAPER_BUY_SLIPPAGE_BPS", "PAPER_SELL_SLIPPAGE_BPS"])
+def test_removed_slippage_settings_log_a_deprecation_warning(monkeypatch, caplog, name):
+    monkeypatch.setenv(name, "5")
+    with caplog.at_level("WARNING"):
+        PaperExecutionAdapterV2.from_env()
+    messages = [r.getMessage() for r in caplog.records if name in r.getMessage()]
+    assert len(messages) == 1
+    assert "PAPER_EXTRA_SLIPPAGE_BPS" in messages[0]
+
+
+def test_no_deprecation_warning_when_removed_settings_are_unset(monkeypatch, caplog):
+    monkeypatch.delenv("PAPER_BUY_SLIPPAGE_BPS", raising=False)
+    monkeypatch.delenv("PAPER_SELL_SLIPPAGE_BPS", raising=False)
+    with caplog.at_level("WARNING"):
+        PaperExecutionAdapterV2.from_env()
+    assert not caplog.records
