@@ -290,7 +290,7 @@ async def test_bot_can_buy_again_after_round_trip(monkeypatch):
     clock = {"now": NOON}
     engine = BotEngine(db, market=MarketDataService(db=db, source="simulated", clock=lambda: clock["now"]))
 
-    # The 300 s trade cooldown compares against wall-clock last_trade_at; let the guard see the same advance as the market clock.
+    # The engine passes its market clock to the cooldown check, so this utc_now patch is a fallback only; kept from before that fix.
     started = datetime.now(UTC)
     monkeypatch.setattr(RiskGuardV2, "utc_now", staticmethod(lambda: started + (clock["now"] - NOON)))
 
