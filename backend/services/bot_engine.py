@@ -11,8 +11,8 @@ from services.portfolio_service_v2 import PortfolioServiceV2
 from services.risk_guard_v2 import RiskGuardV2
 from services.signal_planner_v2 import SignalPlannerV2
 from services.structured_logging import log_event
-from services.trading_service_v2 import TradingServiceV2
 from services.trading_mode_v2 import TradingModeError, TradingModeService
+from services.trading_service_v2 import TradingServiceV2
 
 logger = logging.getLogger(__name__)
 
