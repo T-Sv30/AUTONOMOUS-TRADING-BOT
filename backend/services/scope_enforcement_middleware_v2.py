@@ -8,13 +8,18 @@ from app_state import db
 from auth_core import verify_token
 from services.api_errors_v2 import error_envelope
 from services.authorization_v2 import Scope, effective_scopes, has_scope
-from services.live_approval_challenge_service_v2 import LiveApprovalChallengeError, LiveApprovalChallengeServiceV2
 from services.live_pre_submit_safety_service_v2 import LivePreSubmitSafetyServiceV2
 from services.request_context_v2 import get_request_id
 
+LIVE_ORDER_PATHS = {"/api/live-trading/market-buy", "/api/live-trading/market-sell"}
+
 
 class ScopeEnforcementMiddlewareV2(BaseHTTPMiddleware):
-    """Central authorization and safety choke point for live and privileged ops routes."""
+    """Central authorization and safety choke point for live and privileged ops routes.
+
+    The signed approval challenge is verified and consumed by LiveTradingServiceV2,
+    not here, so every caller of the service is covered and a challenge is consumed once.
+    """
 
     def required_scope_for(self, method: str, path: str, body: dict | None) -> str | None:
         if path.startswith("/api/live-readonly/"):
@@ -26,8 +31,8 @@ class ScopeEnforcementMiddlewareV2(BaseHTTPMiddleware):
         if path == "/api/live-approvals/challenge":
             return Scope.TRADING_LIVE_EXECUTE.value
 
-        if path in {"/api/live-trading/market-buy", "/api/live-trading/market-sell"} and method == "POST":
-            if body and body.get("dry_run") is False:
+        if path in LIVE_ORDER_PATHS and method == "POST":
+            if self.is_non_dry_run_live_order(method, path, body):
                 return Scope.TRADING_LIVE_EXECUTE.value
             return Scope.TRADING_LIVE_PREVIEW.value
 
@@ -44,7 +49,9 @@ class ScopeEnforcementMiddlewareV2(BaseHTTPMiddleware):
 
     @staticmethod
     def is_non_dry_run_live_order(method: str, path: str, body: dict | None) -> bool:
-        return method == "POST" and path in {"/api/live-trading/market-buy", "/api/live-trading/market-sell"} and bool(body and body.get("dry_run") is False)
+        # Fail closed: any dry_run value other than literal true counts as a live order here.
+        # The request model then rejects non-boolean values with 422.
+        return method == "POST" and path in LIVE_ORDER_PATHS and isinstance(body, dict) and "dry_run" in body and body["dry_run"] is not True
 
     @staticmethod
     async def parse_json_body(request: Request) -> tuple[dict | None, bytes]:
@@ -91,29 +98,6 @@ class ScopeEnforcementMiddlewareV2(BaseHTTPMiddleware):
         user["effective_scopes"] = sorted(effective_scopes(user))
         return user
 
-    async def verify_live_approval(self, user: dict, path: str, body: dict) -> JSONResponse | None:
-        try:
-            if path == "/api/live-trading/market-buy":
-                await LiveApprovalChallengeServiceV2(db).verify_and_consume(
-                    user_id=user["id"],
-                    approval_token=body.get("approval_token"),
-                    side="BUY",
-                    symbol=body.get("symbol"),
-                    notional_usd=body.get("notional_usd"),
-                )
-            else:
-                await LiveApprovalChallengeServiceV2(db).verify_and_consume(
-                    user_id=user["id"],
-                    approval_token=body.get("approval_token"),
-                    side="SELL",
-                    symbol=body.get("symbol"),
-                    base_units=body.get("base_units"),
-                    reference_price=body.get("reference_price"),
-                )
-        except LiveApprovalChallengeError as exc:
-            return self.auth_error(403, "FORBIDDEN", str(exc))
-        return None
-
     async def verify_live_pre_submit_safety(self, user: dict) -> JSONResponse | None:
         result = await LivePreSubmitSafetyServiceV2(db).safe_check(user["id"])
         if not result.get("allowed"):
@@ -139,9 +123,6 @@ class ScopeEnforcementMiddlewareV2(BaseHTTPMiddleware):
             return self.auth_error(403, "FORBIDDEN", f"Missing required scope: {required_scope}")
 
         if self.is_non_dry_run_live_order(request.method, request.url.path, parsed_body):
-            approval_error = await self.verify_live_approval(user, request.url.path, parsed_body or {})
-            if approval_error:
-                return approval_error
             safety_error = await self.verify_live_pre_submit_safety(user)
             if safety_error:
                 return safety_error

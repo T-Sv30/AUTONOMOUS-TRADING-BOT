@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 
 from fastapi import Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StrictBool
 
 from api_routes_v2 import api_router
 from app_state import db
@@ -71,7 +71,8 @@ class LiveMarketBuyRequest(BaseModel):
     symbol: str = "BTC-USD"
     notional_usd: float = Field(gt=0)
     approval_token: str | None = None
-    dry_run: bool = True
+    # Strict: "false", 0, "no" or null must not coerce into a non-dry-run live order.
+    dry_run: StrictBool = True
 
 
 class LiveMarketSellRequest(BaseModel):
@@ -79,7 +80,8 @@ class LiveMarketSellRequest(BaseModel):
     base_units: float = Field(gt=0)
     reference_price: float = Field(gt=0)
     approval_token: str | None = None
-    dry_run: bool = True
+    # Strict: "false", 0, "no" or null must not coerce into a non-dry-run live order.
+    dry_run: StrictBool = True
 
 
 class PilotReconciliationResolutionRequest(BaseModel):

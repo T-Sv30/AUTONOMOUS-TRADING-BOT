@@ -6,6 +6,10 @@ from services.coinbase_live_execution_adapter_v2 import (
     CoinbaseLiveExecutionError,
 )
 from services.execution_service_v2 import ExecutionServiceV2
+from services.live_approval_challenge_service_v2 import (
+    LiveApprovalChallengeError,
+    LiveApprovalChallengeServiceV2,
+)
 from services.live_manual_order_lifecycle_service_v2 import (
     LiveManualOrderLifecycleServiceV2,
 )
@@ -20,6 +24,8 @@ class LiveTradingServiceV2:
     This service is the manual live order entrypoint. It keeps the existing live
     gate and adapter boundaries, while wiring in:
 
+    - signed approval challenges, verified and consumed here for every
+      non-dry-run order before the gate runs;
     - live order lifecycle state transitions;
     - persisted live risk decisions;
     - pre-submit safety checks;
@@ -50,6 +56,35 @@ class LiveTradingServiceV2:
 
     async def _audit(self, record: dict[str, Any]) -> dict[str, Any]:
         return await self.audits.append(record)
+
+    async def _verify_approval(
+        self,
+        *,
+        user_id: str,
+        symbol: str,
+        side: str,
+        notional_usd: float,
+        base_units: float | None,
+        reference_price: float | None,
+        approval_token: str | None,
+    ) -> dict[str, Any]:
+        challenges = LiveApprovalChallengeServiceV2(self.db)
+        if side == "BUY":
+            return await challenges.verify_and_consume(
+                user_id=user_id,
+                approval_token=approval_token,
+                side="BUY",
+                symbol=symbol,
+                notional_usd=notional_usd,
+            )
+        return await challenges.verify_and_consume(
+            user_id=user_id,
+            approval_token=approval_token,
+            side="SELL",
+            symbol=symbol,
+            base_units=base_units,
+            reference_price=reference_price,
+        )
 
     async def preview_market_buy(
         self,
@@ -149,6 +184,43 @@ class LiveTradingServiceV2:
             client_order_id=client_order_id,
         )
         live_order_id = lifecycle_order["order_id"]
+        order_fields = {
+            "user_id": user_id,
+            "symbol": symbol,
+            "side": side,
+            "notional_usd": round(float(notional_usd), 8),
+            "base_units": round(float(base_units), 12) if base_units is not None else None,
+            "reference_price": reference_price,
+            "client_order_id": client_order_id,
+            "live_order_id": live_order_id,
+            "dry_run": dry_run,
+        }
+
+        if not dry_run:
+            try:
+                await self._verify_approval(
+                    user_id=user_id,
+                    symbol=symbol,
+                    side=side,
+                    notional_usd=notional_usd,
+                    base_units=base_units,
+                    reference_price=reference_price,
+                    approval_token=approval_token,
+                )
+            except LiveApprovalChallengeError as exc:
+                await self.lifecycle.blocked(
+                    live_order_id,
+                    "manual live order approval challenge rejected",
+                    {"approval_error": str(exc)},
+                )
+                audit = await self._audit({**order_fields, "status": "approval_rejected", "reason": str(exc)})
+                return {
+                    "success": False,
+                    "status": "approval_rejected",
+                    "live_order_id": live_order_id,
+                    "reason": str(exc),
+                    "audit": audit,
+                }
 
         gate = self.gate.safe_preflight(
             trading_mode=mode,
@@ -173,15 +245,7 @@ class LiveTradingServiceV2:
 
         audit = await self._audit(
             {
-                "user_id": user_id,
-                "symbol": symbol,
-                "side": side,
-                "notional_usd": round(float(notional_usd), 8),
-                "base_units": round(float(base_units), 12) if base_units is not None else None,
-                "reference_price": reference_price,
-                "client_order_id": client_order_id,
-                "live_order_id": live_order_id,
-                "dry_run": dry_run,
+                **order_fields,
                 "gate": gate,
                 "risk_decision": risk_decision,
                 "status": (
