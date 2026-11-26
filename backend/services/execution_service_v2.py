@@ -6,8 +6,8 @@ from services.trading_service_v2 import TradingServiceV2
 
 
 class ExecutionServiceV2:
-    def __init__(self):
-        self.trading_service = TradingServiceV2()
+    def __init__(self, trading_service: TradingServiceV2 | None = None):
+        self.trading_service = trading_service or TradingServiceV2()
 
     @staticmethod
     def utc_now() -> str:

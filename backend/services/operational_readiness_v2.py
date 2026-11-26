@@ -33,7 +33,7 @@ class OperationalReadinessServiceV2:
         checks.append(self._check("live_trading_disabled_by_default", not settings.live_trading_enabled or settings.trading_mode == TradingMode.LIVE_TRADING, "critical", "LIVE_TRADING_ENABLED should only be true with TRADING_MODE=live-trading.", {"live_trading_enabled": settings.live_trading_enabled, "trading_mode": settings.trading_mode.value}))
 
         if settings.trading_mode == TradingMode.PAPER:
-            checks.append(self._check("paper_mode_simulation", settings.simulation_mode, "warning", "Paper mode should normally run with SIMULATION_MODE=true."))
+            checks.append(self._check("market_data_source_live", settings.market_data_source == "live", "warning", "Paper results only reflect the market when MARKET_DATA_SOURCE=live."))
 
         if settings.trading_mode == TradingMode.LIVE_READONLY:
             checks.append(self._check("coinbase_readonly_key", bool(settings.coinbase_exchange_api_key), "critical", "Readonly Coinbase API key required."))

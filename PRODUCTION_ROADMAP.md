@@ -422,7 +422,7 @@ Paper production candidate:
 
 ```bash
 DEBUG=False
-SIMULATION_MODE=True
+MARKET_DATA_SOURCE=live
 TRADING_MODE=paper
 JWT_SECRET=<32+ char secret from secret manager>
 CORS_ORIGINS=https://<frontend-domain>
@@ -436,7 +436,7 @@ Live-readonly candidate additionally:
 
 ```bash
 TRADING_MODE=live-readonly
-SIMULATION_MODE=False
+MARKET_DATA_SOURCE=live
 COINBASE_API_KEY=<secret manager ref>
 COINBASE_API_SECRET=<secret manager ref>
 COINBASE_API_PASSPHRASE=<secret manager ref>

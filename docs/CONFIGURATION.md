@@ -80,7 +80,7 @@ RUNTIME_ROLE=api
 API_EMBED_BOT_MANAGER=false
 RUN_MONGO_INDEX_BOOTSTRAP=false
 TRADING_MODE=paper
-SIMULATION_MODE=True
+MARKET_DATA_SOURCE=live
 COINBASE_LIVE_ORDER_KILL_SWITCH=True
 ```
 
@@ -90,5 +90,13 @@ For worker role:
 RUNTIME_ROLE=worker
 RUN_MONGO_INDEX_BOOTSTRAP=false
 TRADING_MODE=paper
-SIMULATION_MODE=True
+MARKET_DATA_SOURCE=live
 ```
+
+`MARKET_DATA_SOURCE` accepts `live` (real Coinbase prices, default), `simulated` (deterministic fake prices for tests and CI) or `replay`. The older `SIMULATION_MODE` is deprecated; when only it is set, `True` maps to `simulated` and anything else to `live`, with a warning.
+
+`replay` serves the newest stored candles for `MARKET_DATA_REPLAY_EXCHANGE` and does not step through time yet (planned for M4).
+
+`MARKET_DATA_TIMEOUT_SECONDS` (default `10`) is how long a market data request may take before it fails. `SIM_SPREAD_BPS` (default `2`) is the bid/ask spread, in basis points, that the `simulated` source quotes. `PAPER_EXTRA_SLIPPAGE_BPS` (default `0`) adds slippage to paper fills on top of pricing at the bid and ask; it replaces the removed `PAPER_BUY_SLIPPAGE_BPS` and `PAPER_SELL_SLIPPAGE_BPS`. `PAPER_FALLBACK_SPREAD_BPS` (default `2`) is the spread paper fills assume when a quote carries no bid and ask.
+
+`MARKET_DATA_REPLAY_EXCHANGE` (default `coinbase_exchange`) picks which stored candles `replay` reads, since simulated and exchange candles can share one collection. Use `simulation` to replay candles stored by the simulated source.

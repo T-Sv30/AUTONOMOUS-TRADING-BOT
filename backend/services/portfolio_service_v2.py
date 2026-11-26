@@ -25,6 +25,7 @@ class PortfolioServiceV2:
             "realized_pnl": 0.0,
             "equity_high": float(starting_cash),
             "daily_start_equity": float(starting_cash),
+            "daily_start_date": datetime.now(UTC).date().isoformat(),
             "updated_at": now,
         }
         await self.db.portfolio_state.insert_one(dict(state))  # copy: insert_one adds an ObjectId _id that breaks JSON responses
@@ -94,12 +95,15 @@ class PortfolioServiceV2:
             "created_at": now,
             "filled_at": now if order.get("status") in {"filled", "partially_filled"} else None,
         }
+        if trade["status"] != "rejected" and trade["idempotency_key"]:
+            # Claims the key in the uniq_trade_idempotency_claim partial index (partial indexes cannot filter on $ne).
+            trade["idempotency_claim"] = True
         await self.db.trades_v2.insert_one(trade)
 
     async def get_trades(self, user_id: str, limit: int = 100) -> list[dict[str, Any]]:
         return await self.db.trades_v2.find({"user_id": user_id}, {"_id": 0}).sort("created_at", -1).limit(limit).to_list(limit)
 
-    async def update_risk_snapshot(self, user_id: str, price_map: dict[str, float] | None = None) -> dict[str, Any]:
+    async def update_risk_snapshot(self, user_id: str, price_map: dict[str, float] | None = None, now: datetime | None = None, max_drawdown_pct: float = 0.05) -> dict[str, Any]:
         state = await self.ensure_account_state(user_id)
         positions = await self.mark_positions(user_id, price_map)
 
@@ -107,7 +111,11 @@ class PortfolioServiceV2:
         positions_value = sum(float(position.get("market_value", 0.0)) for position in positions)
         total_equity = cash_balance + positions_value
         max_equity = max(float(state.get("equity_high", total_equity)), total_equity)
-        daily_start_equity = float(state.get("daily_start_equity", max_equity))
+        today = (now or datetime.now(UTC)).astimezone(UTC).date().isoformat()
+        if state.get("daily_start_date") != today:
+            daily_start_equity = total_equity  # first snapshot of a new UTC day (or a legacy state without a date)
+        else:
+            daily_start_equity = float(state.get("daily_start_equity", max_equity))
         current_drawdown = (max_equity - total_equity) / max_equity if max_equity > 0 else 0.0
         daily_pnl = total_equity - daily_start_equity
         now = self.utc_now()
@@ -116,7 +124,7 @@ class PortfolioServiceV2:
             "user_id": user_id,
             "total_equity": round(total_equity, 8),
             "max_equity": round(max_equity, 8),
-            "equity_floor": round(max_equity * 0.97, 8),
+            "equity_floor": round(max_equity * (1 - max_drawdown_pct), 8),
             "current_drawdown": round(current_drawdown, 8),
             "daily_pnl": round(daily_pnl, 8),
             "positions_value": round(positions_value, 8),
@@ -127,7 +135,7 @@ class PortfolioServiceV2:
         await self.db.risk_metrics.insert_one(snapshot.copy())
         await self.db.portfolio_state.update_one(
             {"user_id": user_id},
-            {"$set": {"equity_high": max_equity, "updated_at": now}},
+            {"$set": {"equity_high": max_equity, "daily_start_equity": daily_start_equity, "daily_start_date": today, "updated_at": now}},
             upsert=True,
         )
         return snapshot

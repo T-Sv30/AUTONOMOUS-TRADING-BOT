@@ -47,7 +47,7 @@ cd backend
 DEBUG=True \
 JWT_SECRET=test-secret-for-e2e-paper-smoke-more-than-32-chars \
 CORS_ORIGINS=http://localhost:3000 \
-SIMULATION_MODE=True \
+MARKET_DATA_SOURCE=simulated \
 TRADING_MODE=paper \
 MONGO_URL=mongodb://localhost:27017 \
 python -m pytest tests/test_e2e_paper_smoke.py

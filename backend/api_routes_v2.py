@@ -16,7 +16,7 @@ class BotConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
     user_id: str = ""
     is_active: bool = False
-    capital_floor: float = 0.97
+    capital_floor: float | None = None  # deprecated and ignored; drawdown is the only equity halt
     max_daily_loss: float = 0.015
     risk_target_vol: float = 0.10
     symbols: list[str] = Field(default_factory=lambda: ["BTC-USD", "ETH-USD"])
@@ -93,11 +93,14 @@ async def get_technical_indicators(symbol: str, current_user: dict = Depends(get
 
 @api_router.get("/market-data/{symbol}")
 async def get_market_data(symbol: str, current_user: dict = Depends(get_current_user)):
+    market = MarketDataService(db=db)
     try:
-        return await MarketDataService().get_current_price(symbol)
+        return await market.get_current_price(symbol)
     except Exception as exc:
         logger.error("Error fetching market data: %s", exc)
         raise HTTPException(status_code=503, detail="Market data unavailable") from exc
+    finally:
+        await market.close()
 
 
 @api_router.post("/bot/start")

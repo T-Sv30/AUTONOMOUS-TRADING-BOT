@@ -74,3 +74,15 @@ def test_phase9_mongo_index_uniqueness_for_report_and_signoff_records():
 
     assert report_unique and report_unique[0].get("unique") is True
     assert signoff_unique and signoff_unique[0].get("unique") is True
+
+
+@pytest.mark.asyncio
+async def test_trade_idempotency_claim_index_is_unique_and_partial():
+    db = FakeDB()
+    await MongoIndexServiceV2(db).ensure_indexes()
+
+    claim = [idx for idx in db.trades_v2.indexes if idx.get("name") == "uniq_trade_idempotency_claim"]
+    assert claim, "uniq_trade_idempotency_claim index missing"
+    assert claim[0]["keys"] == [("idempotency_key", 1)]
+    assert claim[0].get("unique") is True
+    assert claim[0].get("partialFilterExpression") == {"idempotency_claim": True}

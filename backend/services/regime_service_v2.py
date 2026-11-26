@@ -1,17 +1,17 @@
 class RegimeServiceV2:
+    WINDOW = 20
+    RANGE_ER = 0.30
+
     def classify(self, prices):
         if len(prices) < 30:
             return "unknown"
 
-        sma10 = sum(prices[-10:]) / 10
-        sma30 = sum(prices[-30:]) / 30
-        high = max(prices[-20:])
-        low = min(prices[-20:])
-
-        if sma10 > sma30:
-            return "trend_up"
-        if sma10 < sma30:
-            return "trend_down"
-        if (high - low) / max(1e-9, low) < 0.05:
+        window = prices[-(self.WINDOW + 1) :]
+        path = sum(abs(window[i] - window[i - 1]) for i in range(1, len(window)))
+        if path == 0:
             return "range"
-        return "mixed"
+
+        net = window[-1] - window[0]
+        if abs(net) / path < self.RANGE_ER:
+            return "range"
+        return "trend_up" if net > 0 else "trend_down"

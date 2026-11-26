@@ -1,3 +1,5 @@
+import logging
+
 import pytest
 from pydantic import ValidationError
 
@@ -85,3 +87,36 @@ def test_settings_accepts_valid_live_trading_configuration():
 def test_settings_runtime_role_values():
     settings = SettingsV2(debug=True, runtime_role=RuntimeRole.WORKER, jwt_secret="debug", cors_origins=["http://localhost:3000"])
     assert settings.runtime_role == RuntimeRole.WORKER
+
+
+@pytest.fixture
+def valid_env(monkeypatch):
+    monkeypatch.setenv("DEBUG", "true")
+    monkeypatch.setenv("JWT_SECRET", "x" * 40)
+
+
+def test_market_data_source_defaults_to_live(monkeypatch, valid_env):
+    monkeypatch.delenv("MARKET_DATA_SOURCE", raising=False)
+    monkeypatch.delenv("SIMULATION_MODE", raising=False)
+    assert SettingsV2.from_env().market_data_source == "live"
+
+
+def test_market_data_source_rejects_unknown_value(monkeypatch, valid_env):
+    monkeypatch.setenv("MARKET_DATA_SOURCE", "sim")
+    with pytest.raises(ValueError, match="live, simulated, replay"):
+        SettingsV2.from_env()
+
+
+@pytest.mark.parametrize("legacy,expected", [("True", "simulated"), ("false", "live")])
+def test_legacy_simulation_mode_maps_with_deprecation_warning(monkeypatch, caplog, valid_env, legacy, expected):
+    caplog.set_level(logging.WARNING)
+    monkeypatch.delenv("MARKET_DATA_SOURCE", raising=False)
+    monkeypatch.setenv("SIMULATION_MODE", legacy)
+    assert SettingsV2.from_env().market_data_source == expected
+    assert "deprecated" in caplog.text and "MARKET_DATA_SOURCE" in caplog.text
+
+
+def test_market_data_source_wins_over_legacy(monkeypatch, valid_env):
+    monkeypatch.setenv("SIMULATION_MODE", "True")
+    monkeypatch.setenv("MARKET_DATA_SOURCE", "live")
+    assert SettingsV2.from_env().market_data_source == "live"

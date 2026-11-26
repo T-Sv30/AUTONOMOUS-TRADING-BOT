@@ -1,3 +1,5 @@
+from datetime import UTC, datetime
+
 import pytest
 
 from services.portfolio_service_v2 import PortfolioServiceV2
@@ -139,3 +141,39 @@ async def test_trade_ledger_records_attempts():
     assert trades[0]["symbol"] == "ETH-USD"
     assert trades[0]["fee_usd"] == 0.05
     assert trades[0]["signal_snapshot"] == {"strategy": "test"}
+
+
+def _db_with_state(daily_start_date, cash_balance=9000.0):
+    db = FakeDB()
+    db.portfolio_state.docs.append({
+        "user_id": "u1",
+        "cash_balance": cash_balance,
+        "realized_pnl": 0.0,
+        "equity_high": 10000.0,
+        "daily_start_equity": 10000.0,
+        "daily_start_date": daily_start_date,
+    })
+    return db
+
+
+@pytest.mark.asyncio
+async def test_daily_start_equity_rolls_at_utc_midnight():
+    db = _db_with_state("2026-11-25")
+    snap = await PortfolioServiceV2(db).update_risk_snapshot("u1", now=datetime(2026, 11, 26, 0, 0, 5, tzinfo=UTC))
+    assert snap["daily_pnl"] == 0.0
+    state = await db.portfolio_state.find_one({"user_id": "u1"})
+    assert (state["daily_start_equity"], state["daily_start_date"]) == (9000.0, "2026-11-26")
+
+
+@pytest.mark.asyncio
+async def test_daily_start_equity_holds_within_the_day():
+    db = _db_with_state("2026-11-26")
+    snap = await PortfolioServiceV2(db).update_risk_snapshot("u1", now=datetime(2026, 11, 26, 23, 59, tzinfo=UTC))
+    assert snap["daily_pnl"] == -1000.0
+
+
+@pytest.mark.asyncio
+async def test_restart_days_later_rolls_once():
+    db = _db_with_state("2026-11-20", cash_balance=8000.0)
+    snap = await PortfolioServiceV2(db).update_risk_snapshot("u1", now=datetime(2026, 11, 26, 9, 0, tzinfo=UTC))
+    assert snap["daily_pnl"] == 0.0

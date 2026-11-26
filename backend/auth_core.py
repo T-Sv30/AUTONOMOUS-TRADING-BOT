@@ -107,7 +107,6 @@ async def signup(user_data: UserCreate):
     config = {
         "user_id": user.id,
         "is_active": False,
-        "capital_floor": 0.97,
         "max_daily_loss": 0.015,
         "risk_target_vol": 0.10,
         "symbols": ["BTC-USD", "ETH-USD"],

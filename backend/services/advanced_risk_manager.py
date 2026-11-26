@@ -50,10 +50,18 @@ class AdvancedRiskManager:
             
             for pos in positions:
                 quantity = pos.get('quantity', 0)
+                current_price = pos.get('current_price')
+                avg_price = pos.get('avg_price')
+                if current_price and current_price > 0:
+                    price = current_price
+                elif avg_price:
+                    price = avg_price
+                else:
+                    price = 0
                 
-                # Assume 3% stop loss for heat calculation
+                # Assume 3% stop loss for heat calculation (dollars at risk)
                 stop_loss_distance = 0.03
-                position_risk = quantity * stop_loss_distance
+                position_risk = quantity * price * stop_loss_distance
                 
                 total_risk += position_risk
                 positions_at_risk += 1

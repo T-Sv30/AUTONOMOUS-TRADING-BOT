@@ -123,10 +123,13 @@ async def get_alerts(current_user: dict = Depends(get_current_user), limit: int 
 
 @api_router.post("/backtests/run")
 async def run_backtest(request: BacktestRequest, current_user: dict = Depends(get_current_user)):
+    market = MarketDataService(db=db)
     try:
-        candles = await MarketDataService(db=db).get_candles(request.symbol, timeframe=request.timeframe, periods=request.periods)
+        candles = await market.get_candles(request.symbol, timeframe=request.timeframe, periods=request.periods)
     except (ValueError, MarketDataUnavailable) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    finally:
+        await market.close()
     result = BacktestingServiceV2().run_moving_average_backtest(candles, request.to_config())
     result["user_id"] = current_user["id"]
     result["symbol"] = request.symbol
@@ -136,10 +139,13 @@ async def run_backtest(request: BacktestRequest, current_user: dict = Depends(ge
 
 @api_router.post("/backtests/walk-forward")
 async def run_walk_forward(request: WalkForwardRequest, current_user: dict = Depends(get_current_user)):
+    market = MarketDataService(db=db)
     try:
-        candles = await MarketDataService(db=db).get_candles(request.symbol, timeframe=request.timeframe, periods=request.periods)
+        candles = await market.get_candles(request.symbol, timeframe=request.timeframe, periods=request.periods)
     except (ValueError, MarketDataUnavailable) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    finally:
+        await market.close()
     result = BacktestingServiceV2().walk_forward_validation(candles, train_periods=request.train_periods, test_periods=request.test_periods, config=request.to_config())
     result["user_id"] = current_user["id"]
     result["symbol"] = request.symbol

@@ -55,7 +55,7 @@ const Auth = ({ onLogin }) => {
             <div className="glass-card p-4 rounded-lg">
               <Shield className="w-8 h-8 text-primary mb-2" />
               <h3 className="font-semibold mb-1">Risk Protection</h3>
-              <p className="text-sm text-muted-foreground">Capital floor safeguards</p>
+              <p className="text-sm text-muted-foreground">Drawdown and daily-loss safeguards</p>
             </div>
             <div className="glass-card p-4 rounded-lg">
               <TrendingUp className="w-8 h-8 text-primary mb-2" />

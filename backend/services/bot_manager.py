@@ -77,10 +77,7 @@ class BotManager:
 
     async def stop_bot(self, user_id: str, reason: str = "operator_stop"):
         """Stop a paper bot for a specific user and release ownership."""
-        if user_id in self.bot_engines:
-            await self.bot_engines[user_id].stop()
-            del self.bot_engines[user_id]
-
+        # Cancel the running cycle first so it cannot open a new market data session after the engine stops.
         task = self.active_bots.get(user_id)
         if task:
             task.cancel()
@@ -89,6 +86,10 @@ class BotManager:
             except asyncio.CancelledError:
                 pass
             del self.active_bots[user_id]
+
+        if user_id in self.bot_engines:
+            await self.bot_engines[user_id].stop()
+            del self.bot_engines[user_id]
 
         await self.heartbeat.release_bot_ownership(user_id)
         logger.info("Bot stopped for user %s: %s", user_id, reason)

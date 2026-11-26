@@ -326,8 +326,8 @@ flowchart LR
     Bot[BotEngine]
     Backtest[BacktestingServiceV2]
 
-    MarketDataService -->|SIMULATION_MODE=true| Sim
-    MarketDataService -->|SIMULATION_MODE=false| Coinbase
+    MarketDataService -->|MARKET_DATA_SOURCE=simulated| Sim
+    MarketDataService -->|MARKET_DATA_SOURCE=live| Coinbase
     MarketDataService --> Candles
     Bot --> MarketDataService
     Backtest --> MarketDataService

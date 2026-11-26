@@ -3,7 +3,7 @@ import os
 os.environ.setdefault("DEBUG", "True")
 os.environ.setdefault("JWT_SECRET", "test-secret-for-request-error-tests-more-than-32-chars")
 os.environ.setdefault("CORS_ORIGINS", "http://localhost:3000")
-os.environ.setdefault("SIMULATION_MODE", "True")
+os.environ.setdefault("MARKET_DATA_SOURCE", "simulated")
 os.environ.setdefault("TRADING_MODE", "paper")
 os.environ.setdefault("RUNTIME_ROLE", "api")
 os.environ.setdefault("API_EMBED_BOT_MANAGER", "false")

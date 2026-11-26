@@ -8,7 +8,7 @@ Treat the system as live-capable but not automatically live-trading-ready. Defau
 
 ```env
 TRADING_MODE=paper
-SIMULATION_MODE=true
+MARKET_DATA_SOURCE=live
 LIVE_TRADING_ENABLED=false
 LIVE_EXECUTION_ADAPTER=disabled
 ```
