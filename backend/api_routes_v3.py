@@ -52,6 +52,7 @@ class BacktestRequest(BaseModel):
             fast_window=self.fast_window,
             slow_window=self.slow_window,
             min_trade_notional=self.min_trade_notional,
+            timeframe=self.timeframe,
         )
 
 
