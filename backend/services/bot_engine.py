@@ -166,7 +166,7 @@ class BotEngine:
 
             await self.portfolio.record_buy_fill(user_id, symbol, order["filled_price"], order["base_units"], order["notional_usd"], order.get("fee_usd", 0.0), order=order)
             await self.db.portfolio_state.update_one({"user_id": user_id}, {"$set": {"last_trade_at": datetime.now(UTC).isoformat()}}, upsert=True)
-            await self.portfolio.update_risk_snapshot(user_id, {symbol: float(order["filled_price"])})
+            await self.portfolio.update_risk_snapshot(user_id, {symbol: float(order["filled_price"])}, now=self._now())
         finally:
             await self.execution_control.release_lock(lock["key"])
 
@@ -205,6 +205,6 @@ class BotEngine:
             result = await self.portfolio.record_sell_fill(user_id, symbol, order["filled_price"], order["base_units"], order.get("fee_usd", 0.0), order=order)
             await self.db.trades_v2.update_one({"client_order_id": order.get("client_order_id")}, {"$set": {"realized_pnl": result.get("realized_pnl", 0.0), "idempotency_key": idempotency_key}})
             await self.db.portfolio_state.update_one({"user_id": user_id}, {"$set": {"last_trade_at": datetime.now(UTC).isoformat()}}, upsert=True)
-            await self.portfolio.update_risk_snapshot(user_id, {symbol: float(order["filled_price"])})
+            await self.portfolio.update_risk_snapshot(user_id, {symbol: float(order["filled_price"])}, now=self._now())
         finally:
             await self.execution_control.release_lock(lock["key"])
