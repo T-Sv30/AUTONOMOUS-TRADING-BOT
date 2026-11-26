@@ -1,0 +1,191 @@
+from datetime import UTC, datetime, timedelta
+
+import pytest
+from pymongo import UpdateOne
+
+from services.bot_engine import BotEngine
+from services.market_data_service import MarketDataService, MarketDataUnavailable
+from services.risk_guard_v2 import RiskGuardV2
+
+NOON = datetime(2026, 11, 26, 12, 0, tzinfo=UTC)
+
+
+def _matches(doc, query):
+    for key, cond in query.items():
+        if key == "$or":
+            if not any(_matches(doc, sub) for sub in cond):
+                return False
+        elif isinstance(cond, dict):
+            value = doc.get(key)
+            for op, operand in cond.items():
+                if op == "$exists" and (key in doc) != operand:
+                    return False
+                if op == "$lte" and not (value is not None and value <= operand):
+                    return False
+                if op == "$gte" and not (value is not None and value >= operand):
+                    return False
+                if op == "$in" and value not in operand:
+                    return False
+                if op == "$ne" and value == operand:
+                    return False
+        elif doc.get(key) != cond:
+            return False
+    return True
+
+
+def _apply_update(doc, update):
+    for key, value in update.get("$set", {}).items():
+        doc[key] = value
+    for key, value in update.get("$inc", {}).items():
+        doc[key] = doc.get(key, 0) + value
+
+
+class FakeCursor:
+    def __init__(self, docs):
+        self.docs = docs
+
+    def sort(self, key, direction=1):
+        self.docs = sorted(self.docs, key=lambda doc: doc.get(key, ""), reverse=direction < 0)
+        return self
+
+    def limit(self, limit):
+        self.docs = self.docs[:limit]
+        return self
+
+    async def to_list(self, limit):
+        return self.docs[:limit]
+
+
+class FakeCollection:
+    def __init__(self):
+        self.docs = []
+        self.bulk_calls = []
+
+    async def find_one(self, query, projection=None, sort=None):
+        matches = [doc for doc in self.docs if _matches(doc, query)]
+        if sort:
+            key, direction = sort[0]
+            matches.sort(key=lambda doc: doc.get(key, ""), reverse=direction < 0)
+        return dict(matches[0]) if matches else None
+
+    async def insert_one(self, doc):
+        self.docs.append(dict(doc))
+
+    async def update_one(self, query, update, upsert=False):
+        doc = next((d for d in self.docs if _matches(d, query)), None)
+        if doc is None:
+            if not upsert:
+                return
+            doc = {k: v for k, v in query.items() if not k.startswith("$") and not isinstance(v, dict)}
+            self.docs.append(doc)
+        _apply_update(doc, update)
+
+    async def update_many(self, query, update):
+        for doc in self.docs:
+            if _matches(doc, query):
+                _apply_update(doc, update)
+
+    async def find_one_and_update(self, query, update, upsert=False, return_document=None, projection=None):
+        await self.update_one(query, update, upsert=upsert)
+        return await self.find_one({k: v for k, v in query.items() if not k.startswith("$")})
+
+    async def bulk_write(self, ops, ordered=True):
+        self.bulk_calls.append((list(ops), ordered))
+        for op in ops:
+            assert isinstance(op, UpdateOne)
+            await self.update_one(op._filter, op._doc, upsert=True)
+
+    async def delete_one(self, query):
+        self.docs = [doc for doc in self.docs if not _matches(doc, query)]
+
+    def find(self, query, projection=None):
+        return FakeCursor([dict(doc) for doc in self.docs if _matches(doc, query)])
+
+    async def count_documents(self, query):
+        return len([doc for doc in self.docs if _matches(doc, query)])
+
+
+class FakeDB:
+    """In-memory Mongo stand-in shared by bot-engine tests; collections appear on demand."""
+
+    def __getattr__(self, name):
+        if name.startswith("_"):
+            raise AttributeError(name)
+        collection = FakeCollection()
+        setattr(self, name, collection)
+        return collection
+
+
+@pytest.mark.asyncio
+async def test_bot_persists_candles_it_reads():
+    db = FakeDB()
+    engine = BotEngine(db, market=MarketDataService(db=db, source="simulated", clock=lambda: NOON))
+    await engine.process_symbol("u1", "BTC-USD", [], {}, RiskGuardV2(), {"BTC-USD": 45000.0})
+    assert len(db.market_candles.docs) == 120
+
+
+@pytest.mark.asyncio
+async def test_only_new_closed_candles_are_written_in_one_bulk_call():
+    db = FakeDB()
+    clock = {"now": NOON}
+    svc = MarketDataService(db=db, source="simulated", clock=lambda: clock["now"])
+    await svc.get_candles("BTC-USD", periods=120)
+    clock["now"] = NOON + timedelta(minutes=1)
+    await svc.get_candles("BTC-USD", periods=120)
+    calls = db.market_candles.bulk_calls
+    assert [len(ops) for ops, _ in calls] == [120, 1]
+    assert all(ordered is False for _, ordered in calls)
+
+
+@pytest.mark.asyncio
+async def test_replay_reads_stored_candles():
+    db = FakeDB()
+    await MarketDataService(db=db, source="simulated", clock=lambda: NOON).get_candles("BTC-USD", periods=30)
+    replay = MarketDataService(db=db, source="replay")
+    candles = await replay.get_candles("BTC-USD", periods=30)
+    assert len(candles) == 30
+    ticker = await replay.get_current_price("BTC-USD")
+    assert ticker["price"] == candles[-1]["close"]
+    assert ticker["bid"] is None and ticker["ask"] is None
+    assert len(db.market_candles.bulk_calls) == 1  # replay does not write
+
+
+@pytest.mark.asyncio
+async def test_replay_with_nothing_stored_is_unavailable():
+    replay = MarketDataService(db=FakeDB(), source="replay")
+    with pytest.raises(MarketDataUnavailable):
+        await replay.get_candles("BTC-USD", periods=30)
+    with pytest.raises(MarketDataUnavailable):
+        await replay.get_current_price("BTC-USD")
+
+
+@pytest.mark.asyncio
+async def test_failing_symbol_is_skipped_and_others_still_trade(monkeypatch):
+    monkeypatch.setenv("TRADING_MODE", "paper")
+    db = FakeDB()
+    db.bot_configs.docs.append({"user_id": "u1", "is_active": True, "symbols": ["BTC-USD", "ETH-USD"]})
+
+    class FlakyMarket(MarketDataService):
+        async def get_historical_data(self, symbol, periods=100, timeframe="1m"):
+            if symbol == "ETH-USD":
+                raise MarketDataUnavailable("ETH feed down")
+            return await super().get_historical_data(symbol, periods, timeframe)
+
+    engine = BotEngine(db, market=FlakyMarket(db=db, source="simulated", clock=lambda: NOON))
+    processed_symbols = []
+
+    def build_plan(symbol, prices, has_position, base_notional=100.0):
+        processed_symbols.append(symbol)
+        return {"symbol": symbol, "action": "HOLD"}
+
+    monkeypatch.setattr(engine.planner, "build_plan", build_plan)
+    await engine.cycle("u1")
+    assert any(a["type"] == "market_data_failed" for a in db.alerts.docs)
+    assert processed_symbols == ["BTC-USD"]
+
+
+@pytest.mark.asyncio
+async def test_paper_fills_use_the_engine_market():
+    market = MarketDataService(db=FakeDB(), source="simulated", clock=lambda: NOON)
+    engine = BotEngine(FakeDB(), market=market)
+    assert engine.execution.trading_service.adapter.market_data is market

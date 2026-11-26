@@ -41,6 +41,15 @@ class FakeCollection:
             inserted.update(update.get("$set", {}))
             self.docs.append(inserted)
 
+    async def find_one(self, query, projection=None, sort=None):
+        matches = [doc for doc in self.docs if all(doc.get(k) == v for k, v in query.items())]
+        matches.sort(key=lambda doc: doc.get("open_time", ""), reverse=True)
+        return dict(matches[0]) if matches else None
+
+    async def bulk_write(self, ops, ordered=True):
+        for op in ops:
+            await self.update_one(op._filter, op._doc, upsert=True)
+
     def find(self, query, projection=None):
         matches = [dict(doc) for doc in self.docs if all(doc.get(k) == v for k, v in query.items())]
         return FakeCursor(matches)
