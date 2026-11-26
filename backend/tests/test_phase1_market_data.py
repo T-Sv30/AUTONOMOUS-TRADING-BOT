@@ -200,7 +200,7 @@ def live(ticker=None, rows=None, built=None, **session_kwargs):
     sessions = built if built is not None else []
 
     def factory(**kwargs):
-        session = FakeSession(ticker=ticker, rows=rows, kwargs=kwargs, **session_kwargs)
+        session = FakeSession(ticker=ticker, rows=rows, **kwargs, **session_kwargs)
         sessions.append(session)
         return session
 
