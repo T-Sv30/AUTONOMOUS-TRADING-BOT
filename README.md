@@ -510,7 +510,7 @@ Use these values for normal local development:
 | Variable | Beginner explanation |
 |---|---|
 | `DEBUG` | Turns development behavior on/off. Use `False` outside local development. |
-| `MARKET_DATA_SOURCE` | Where prices come from: `live` (real Coinbase prices, the default), `simulated` (deterministic fake prices for tests and CI) or `replay`. The old `SIMULATION_MODE` variable is deprecated: `True` maps to `simulated`, anything else to `live`. |
+| `MARKET_DATA_SOURCE` | Where prices come from: `live` (real Coinbase prices, the default), `simulated` (deterministic fake prices for tests and CI) or `replay` (serves the newest stored candles for `MARKET_DATA_REPLAY_EXCHANGE` and does not step through time yet, planned for M4). The old `SIMULATION_MODE` variable is deprecated: `True` maps to `simulated`, anything else to `live`. |
 | `TRADING_MODE` | Controls the trading mode. Safe default is `paper`. |
 | `JWT_SECRET` | Secret used for login tokens. Must be long and private. |
 | `CORS_ORIGINS` | Frontend URLs allowed to talk to the backend. Do not use wildcard in production. |
