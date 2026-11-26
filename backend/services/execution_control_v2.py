@@ -23,8 +23,13 @@ class ExecutionControlV2:
         """One key per decision: the same strategy may trade again on a later closed candle."""
         signal_snapshot = signal_snapshot or {}
         strategy = signal_snapshot.get("selected", {}).get("strategy") or signal_snapshot.get("strategy", "unknown")
-        action = signal_snapshot.get("action", side)
-        return f"{user_id}:{symbol}:{side}:{action}:{strategy}"  # THROWAWAY: old key, no timeframe or decision time
+        timeframe = signal_snapshot.get("timeframe")
+        if not timeframe:
+            raise ValueError("signal_snapshot.timeframe is required")
+        decision_candle_close = signal_snapshot.get("decision_candle_close")
+        if not decision_candle_close:
+            raise ValueError("signal_snapshot.decision_candle_close is required")
+        return f"{user_id}:{symbol}:{side}:{strategy}:{timeframe}:{decision_candle_close}"
 
     async def acquire_lock(self, user_id: str, symbol: str, side: str) -> dict[str, Any]:
         key = f"{user_id}:{symbol}:{side}"
