@@ -34,8 +34,14 @@ class PaperExecutionAdapterV2:
     SUPPORTED_SYMBOLS = {"BTC-USD", "ETH-USD"}
 
     def __init__(self, market_data: MarketDataService | None = None, config: PaperExecutionConfig | None = None):
+        self._owns_market_data = market_data is None
         self.market_data = market_data or MarketDataService()
         self.config = config or self.from_env()
+
+    async def close(self) -> None:
+        """Close the market data session, but only if this adapter created it."""
+        if self._owns_market_data:
+            await self.market_data.close()
 
     @staticmethod
     def from_env() -> PaperExecutionConfig:

@@ -93,11 +93,14 @@ async def get_technical_indicators(symbol: str, current_user: dict = Depends(get
 
 @api_router.get("/market-data/{symbol}")
 async def get_market_data(symbol: str, current_user: dict = Depends(get_current_user)):
+    market = MarketDataService()
     try:
-        return await MarketDataService().get_current_price(symbol)
+        return await market.get_current_price(symbol)
     except Exception as exc:
         logger.error("Error fetching market data: %s", exc)
         raise HTTPException(status_code=503, detail="Market data unavailable") from exc
+    finally:
+        await market.close()
 
 
 @api_router.post("/bot/start")
