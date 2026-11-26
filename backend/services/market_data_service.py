@@ -264,7 +264,7 @@ class MarketDataService:
 
     async def _fetch_coinbase_candles(self, symbol: str, timeframe: str, periods: int) -> list[dict[str, Any]]:
         granularity = self.granularity_for(timeframe)
-        limit = min(periods + 1, self.MAX_COINBASE_CANDLES)  # +1: the newest candle is usually still open
+        limit = min(periods, self.MAX_COINBASE_CANDLES)  # +1: the newest candle is usually still open
         now = self.clock()
         end = now
         start = end - timedelta(seconds=granularity * limit)
@@ -288,8 +288,6 @@ class MarketDataService:
             # Coinbase Exchange candle format: [time, low, high, open, close, volume]
             open_time = datetime.fromtimestamp(int(row[0]), tz=UTC)
             close_time = open_time + timedelta(seconds=granularity)
-            if close_time > now:
-                continue  # still open: not a closed candle
             is_stale = (now - close_time).total_seconds() > granularity * 3
             candle = {
                 "symbol": symbol,
