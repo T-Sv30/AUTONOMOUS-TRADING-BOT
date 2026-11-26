@@ -1,5 +1,5 @@
-from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 
 class LiveRiskDecisionServiceV2:
@@ -14,7 +14,7 @@ class LiveRiskDecisionServiceV2:
 
     @staticmethod
     def utc_now() -> str:
-        return datetime.now(timezone.utc).isoformat()
+        return datetime.now(UTC).isoformat()
 
     async def decide(
         self,
@@ -24,9 +24,9 @@ class LiveRiskDecisionServiceV2:
         side: str,
         notional_usd: float,
         request_id: str = "",
-        checks: Optional[list[Dict[str, Any]]] = None,
-        metadata: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+        checks: list[dict[str, Any]] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         checks = checks or []
         blocked = [check for check in checks if not check.get("passed", False)]
         decision = {
@@ -42,7 +42,7 @@ class LiveRiskDecisionServiceV2:
             "created_at": self.utc_now(),
             "version": "live_risk_decision_v2",
         }
-        await self.db.live_risk_decisions.insert_one(decision)
+        await self.db.live_risk_decisions.insert_one(dict(decision))  # copy: insert_one adds an ObjectId _id that breaks JSON responses
         return decision
 
     async def allow_basic_manual_order(
@@ -55,8 +55,8 @@ class LiveRiskDecisionServiceV2:
         max_notional_usd: float,
         allowed_symbols: list[str],
         request_id: str = "",
-        metadata: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         checks = [
             {"name": "positive_notional", "passed": float(notional_usd) > 0, "reason": "order notional must be positive"},
             {"name": "max_notional", "passed": float(notional_usd) <= float(max_notional_usd), "reason": "order exceeds live max notional"},

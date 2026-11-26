@@ -1,5 +1,4 @@
-from datetime import datetime, timezone
-from typing import List
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
@@ -20,8 +19,8 @@ class BotConfig(BaseModel):
     capital_floor: float = 0.97
     max_daily_loss: float = 0.015
     risk_target_vol: float = 0.10
-    symbols: List[str] = Field(default_factory=lambda: ["BTC-USD", "ETH-USD"])
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    symbols: list[str] = Field(default_factory=lambda: ["BTC-USD", "ETH-USD"])
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 def portfolio() -> PortfolioServiceV2:
@@ -66,7 +65,7 @@ async def get_bot_config(current_user: dict = Depends(get_current_user)):
 async def update_bot_config(config_update: BotConfig, current_user: dict = Depends(get_current_user)):
     config_dict = config_update.model_dump()
     config_dict["user_id"] = current_user["id"]
-    config_dict["updated_at"] = datetime.now(timezone.utc).isoformat()
+    config_dict["updated_at"] = datetime.now(UTC).isoformat()
     await db.bot_configs.update_one({"user_id": current_user["id"]}, {"$set": config_dict}, upsert=True)
     return {"status": "success", "config": config_dict}
 
@@ -98,7 +97,7 @@ async def get_market_data(symbol: str, current_user: dict = Depends(get_current_
         return await MarketDataService().get_current_price(symbol)
     except Exception as exc:
         logger.error("Error fetching market data: %s", exc)
-        raise HTTPException(status_code=503, detail="Market data unavailable")
+        raise HTTPException(status_code=503, detail="Market data unavailable") from exc
 
 
 @api_router.post("/bot/start")
@@ -106,7 +105,7 @@ async def start_bot(current_user: dict = Depends(get_current_user)):
     await portfolio().ensure_account_state(current_user["id"])
     await db.bot_configs.update_one(
         {"user_id": current_user["id"]},
-        {"$set": {"is_active": True, "updated_at": datetime.now(timezone.utc).isoformat()}},
+        {"$set": {"is_active": True, "updated_at": datetime.now(UTC).isoformat()}},
     )
     logger.info("Bot activation requested for user %s", current_user["id"])
     return {"status": "Bot started", "is_active": True}
@@ -116,7 +115,7 @@ async def start_bot(current_user: dict = Depends(get_current_user)):
 async def stop_bot(current_user: dict = Depends(get_current_user)):
     await db.bot_configs.update_one(
         {"user_id": current_user["id"]},
-        {"$set": {"is_active": False, "updated_at": datetime.now(timezone.utc).isoformat()}},
+        {"$set": {"is_active": False, "updated_at": datetime.now(UTC).isoformat()}},
     )
     logger.info("Bot stop requested for user %s", current_user["id"])
     return {"status": "Bot stopped", "is_active": False}

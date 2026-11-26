@@ -51,7 +51,7 @@ class StrategyServiceV2:
 
     @classmethod
     def _returns(cls, values: list[float]) -> list[float]:
-        return [cls._safe_div(current - previous, previous) for previous, current in zip(values, values[1:])]
+        return [cls._safe_div(current - previous, previous) for previous, current in zip(values, values[1:], strict=False)]
 
     @classmethod
     def _zscore(cls, values: list[float], window: int) -> float:
@@ -65,7 +65,7 @@ class StrategyServiceV2:
     def _rsi(cls, values: list[float], window: int = 14) -> float:
         if len(values) <= window:
             return 50.0
-        deltas = [current - previous for previous, current in zip(values[-window - 1 :], values[-window:])]
+        deltas = [current - previous for previous, current in zip(values[-window - 1 :], values[-window:], strict=False)]
         gains = [delta for delta in deltas if delta > 0]
         losses = [-delta for delta in deltas if delta < 0]
         avg_gain = mean(gains) if gains else 0.0

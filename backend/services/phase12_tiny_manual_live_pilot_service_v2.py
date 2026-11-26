@@ -1,6 +1,6 @@
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -9,9 +9,9 @@ class PilotControlCheck:
     passed: bool
     severity: str
     detail: str
-    observed: Optional[Dict[str, Any]] = None
+    observed: dict[str, Any] | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         payload = {
             "name": self.name,
             "passed": self.passed,
@@ -40,10 +40,10 @@ class Phase12TinyManualLivePilotServiceV2:
 
     @staticmethod
     def utc_now() -> str:
-        return datetime.now(timezone.utc).isoformat()
+        return datetime.now(UTC).isoformat()
 
     @classmethod
-    def plan(cls) -> Dict[str, Any]:
+    def plan(cls) -> dict[str, Any]:
         return {
             "phase": "phase_12_tiny_manual_live_pilot",
             "live_order_submission": "human_triggered_only_existing_manual_endpoint",
@@ -63,7 +63,7 @@ class Phase12TinyManualLivePilotServiceV2:
             ],
         }
 
-    async def active_or_unreviewed_pilots(self, user_id: str) -> Dict[str, Any]:
+    async def active_or_unreviewed_pilots(self, user_id: str) -> dict[str, Any]:
         pending_requirements = await self.db.live_post_submit_reconciliation_requirements.find(
             {"user_id": user_id, "status": "pending"}, {"_id": 0}
         ).sort("created_at", -1).limit(20).to_list(20)
@@ -88,12 +88,12 @@ class Phase12TinyManualLivePilotServiceV2:
         side: str,
         notional_usd: float,
         operator_acknowledgement: str,
-        readiness: Dict[str, Any],
-        expansion_status: Dict[str, Any],
-        latest_dry_run: Dict[str, Any],
-        active_state: Dict[str, Any],
+        readiness: dict[str, Any],
+        expansion_status: dict[str, Any],
+        latest_dry_run: dict[str, Any],
+        active_state: dict[str, Any],
         max_notional_usd: float = DEFAULT_MAX_NOTIONAL_USD,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         symbol = str(symbol or "").upper()
         side = str(side or "").upper()
         try:
@@ -103,7 +103,7 @@ class Phase12TinyManualLivePilotServiceV2:
 
         dry_run_order = latest_dry_run.get("order") if isinstance(latest_dry_run.get("order"), dict) else {}
         dry_run_requested = dry_run_order.get("requested") if isinstance(dry_run_order.get("requested"), dict) else latest_dry_run.get("requested", {})
-        checks: List[PilotControlCheck] = [
+        checks: list[PilotControlCheck] = [
             PilotControlCheck(
                 name="operator_acknowledgement_exact",
                 passed=operator_acknowledgement == cls.REQUIRED_ACKNOWLEDGEMENT,
@@ -200,11 +200,11 @@ class Phase12TinyManualLivePilotServiceV2:
         side: str,
         notional_usd: float,
         operator_acknowledgement: str,
-        readiness: Dict[str, Any],
-        expansion_status: Dict[str, Any],
-        latest_dry_run: Dict[str, Any],
+        readiness: dict[str, Any],
+        expansion_status: dict[str, Any],
+        latest_dry_run: dict[str, Any],
         max_notional_usd: float = DEFAULT_MAX_NOTIONAL_USD,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         active_state = await self.active_or_unreviewed_pilots(user_id)
         decision = self.validate_candidate(
             symbol=symbol,
@@ -225,5 +225,5 @@ class Phase12TinyManualLivePilotServiceV2:
             "decision": decision,
             "created_at": self.utc_now(),
         }
-        await self.db.manual_live_pilot_candidate_decisions.insert_one(record)
+        await self.db.manual_live_pilot_candidate_decisions.insert_one(dict(record))  # copy: insert_one adds an ObjectId _id that breaks JSON responses
         return record

@@ -1,6 +1,6 @@
 import hashlib
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 
 class LedgerServiceV2:
@@ -16,10 +16,10 @@ class LedgerServiceV2:
 
     @staticmethod
     def utc_now() -> str:
-        return datetime.now(timezone.utc).isoformat()
+        return datetime.now(UTC).isoformat()
 
     @staticmethod
-    def stable_entry_id(entry: Dict[str, Any]) -> str:
+    def stable_entry_id(entry: dict[str, Any]) -> str:
         material = "|".join(
             str(entry.get(key, ""))
             for key in [
@@ -36,7 +36,7 @@ class LedgerServiceV2:
         )
         return hashlib.sha256(material.encode("utf-8")).hexdigest()
 
-    async def append_entry(self, entry: Dict[str, Any]) -> Dict[str, Any]:
+    async def append_entry(self, entry: dict[str, Any]) -> dict[str, Any]:
         now = self.utc_now()
         normalized = {
             "user_id": entry["user_id"],
@@ -60,7 +60,7 @@ class LedgerServiceV2:
             "created_at": entry.get("created_at") or now,
         }
         normalized["entry_id"] = entry.get("entry_id") or self.stable_entry_id(normalized)
-        await self.db.ledger_entries.insert_one(normalized)
+        await self.db.ledger_entries.insert_one(dict(normalized))  # copy: insert_one adds an ObjectId _id that breaks JSON responses
         return normalized
 
     async def record_buy_fill(
@@ -71,8 +71,8 @@ class LedgerServiceV2:
         base_units: float,
         notional_usd: float,
         fee_usd: float = 0.0,
-        order: Optional[Dict[str, Any]] = None,
-    ) -> List[Dict[str, Any]]:
+        order: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
         order = order or {}
         gross_notional = float(notional_usd)
         fee = float(fee_usd or 0.0)
@@ -125,8 +125,8 @@ class LedgerServiceV2:
         fee_usd: float = 0.0,
         sold_cost_basis: float = 0.0,
         realized_pnl: float = 0.0,
-        order: Optional[Dict[str, Any]] = None,
-    ) -> List[Dict[str, Any]]:
+        order: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
         order = order or {}
         common = {
             "user_id": user_id,
@@ -173,20 +173,23 @@ class LedgerServiceV2:
             ),
         ]
 
-    async def list_entries(self, user_id: str, limit: int = 250) -> List[Dict[str, Any]]:
+    async def list_entries(self, user_id: str, limit: int = 250) -> list[dict[str, Any]]:
         return await self.db.ledger_entries.find({"user_id": user_id}, {"_id": 0}).sort("created_at", -1).limit(limit).to_list(limit)
 
-    async def rebuild_from_ledger(self, user_id: str, starting_cash: float = 10000.0) -> Dict[str, Any]:
+    async def rebuild_from_ledger(self, user_id: str, starting_cash: float = 10000.0) -> dict[str, Any]:
         entries = await self.db.ledger_entries.find({"user_id": user_id}, {"_id": 0}).sort("created_at", 1).to_list(10000)
         cash_balance = float(starting_cash)
         realized_pnl = 0.0
-        positions: Dict[str, Dict[str, float]] = {}
+        positions: dict[str, dict[str, float]] = {}
 
         for entry in entries:
             symbol = entry.get("symbol")
             event_type = entry.get("event_type")
             cash_balance += float(entry.get("cash_delta", 0.0) or 0.0)
-            realized_pnl += float(entry.get("realized_pnl", 0.0) or 0.0)
+            # SELL_FILL entries carry realized_pnl for display; the REALIZED_PNL entry is the
+            # single accounting source, so counting both would double realized PnL.
+            if event_type == "REALIZED_PNL":
+                realized_pnl += float(entry.get("realized_pnl", 0.0) or 0.0)
             if symbol:
                 position = positions.setdefault(symbol, {"base_units": 0.0, "notional_usd": 0.0, "fees_paid_usd": 0.0})
                 position["base_units"] += float(entry.get("base_delta", 0.0) or 0.0)
@@ -219,7 +222,7 @@ class LedgerServiceV2:
             "rebuilt_at": self.utc_now(),
         }
 
-    async def reconcile(self, user_id: str, starting_cash: float = 10000.0, tolerance: float = 1e-6) -> Dict[str, Any]:
+    async def reconcile(self, user_id: str, starting_cash: float = 10000.0, tolerance: float = 1e-6) -> dict[str, Any]:
         rebuilt = await self.rebuild_from_ledger(user_id, starting_cash=starting_cash)
         state = await self.db.portfolio_state.find_one({"user_id": user_id}, {"_id": 0}) or {}
         current_positions = await self.db.positions_v2.find({"user_id": user_id}, {"_id": 0}).to_list(1000)

@@ -1,6 +1,6 @@
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -9,9 +9,9 @@ class ReleaseCheck:
     passed: bool
     severity: str
     detail: str
-    observed: Optional[Dict[str, Any]] = None
+    observed: dict[str, Any] | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         payload = {
             "name": self.name,
             "passed": self.passed,
@@ -42,10 +42,10 @@ class Phase13PilotReleaseServiceV2:
 
     @staticmethod
     def utc_now() -> str:
-        return datetime.now(timezone.utc).isoformat()
+        return datetime.now(UTC).isoformat()
 
     @classmethod
-    def policy(cls) -> Dict[str, Any]:
+    def policy(cls) -> dict[str, Any]:
         return {
             "phase": "phase_13_pilot_review_and_limited_manual_release",
             "release_scope": "limited_repeated_manual_live_only",
@@ -64,7 +64,7 @@ class Phase13PilotReleaseServiceV2:
             ],
         }
 
-    async def fetch_evidence(self, user_id: str, limit: int = 100) -> Dict[str, Any]:
+    async def fetch_evidence(self, user_id: str, limit: int = 100) -> dict[str, Any]:
         reports = await self.db.manual_live_pilot_reports.find({"user_id": user_id}, {"_id": 0}).sort("generated_at", -1).limit(limit).to_list(limit)
         signoffs = await self.db.manual_live_pilot_signoffs.find({"user_id": user_id}, {"_id": 0}).sort("signed_at", -1).limit(limit).to_list(limit)
         requirements = await self.db.live_post_submit_reconciliation_requirements.find({"user_id": user_id}, {"_id": 0}).sort("created_at", -1).limit(limit).to_list(limit)
@@ -82,11 +82,11 @@ class Phase13PilotReleaseServiceV2:
     def evaluate_evidence(
         cls,
         *,
-        evidence: Dict[str, Any],
+        evidence: dict[str, Any],
         requested_max_notional_usd: float = DEFAULT_MAX_RELEASE_NOTIONAL_USD,
-        requested_symbols: Optional[List[str]] = None,
+        requested_symbols: list[str] | None = None,
         minimum_reviewed_pilots: int = DEFAULT_MIN_REVIEWED_PILOTS,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         reports = evidence.get("reports", []) or []
         signoffs = evidence.get("signoffs", []) or []
         requirements = evidence.get("requirements", []) or []
@@ -181,9 +181,9 @@ class Phase13PilotReleaseServiceV2:
         *,
         user_id: str,
         requested_max_notional_usd: float = DEFAULT_MAX_RELEASE_NOTIONAL_USD,
-        requested_symbols: Optional[List[str]] = None,
+        requested_symbols: list[str] | None = None,
         minimum_reviewed_pilots: int = DEFAULT_MIN_REVIEWED_PILOTS,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         evidence = await self.fetch_evidence(user_id)
         result = self.evaluate_evidence(
             evidence=evidence,
@@ -199,5 +199,5 @@ class Phase13PilotReleaseServiceV2:
             "result": result,
             "created_at": self.utc_now(),
         }
-        await self.db.manual_live_release_decisions.insert_one(record)
+        await self.db.manual_live_release_decisions.insert_one(dict(record))  # copy: insert_one adds an ObjectId _id that breaks JSON responses
         return record

@@ -1,8 +1,8 @@
 import pytest
 
+from services.execution_service_v2 import ExecutionServiceV2
 from services.paper_execution_adapter_v2 import PaperExecutionAdapterV2, PaperExecutionConfig
 from services.trading_service_v2 import TradingServiceV2
-from services.execution_service_v2 import ExecutionServiceV2
 
 
 class FixedMarketData:

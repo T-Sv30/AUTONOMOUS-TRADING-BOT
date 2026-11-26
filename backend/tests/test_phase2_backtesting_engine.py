@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -6,7 +6,7 @@ from services.backtesting_service_v2 import BacktestConfig, BacktestingServiceV2
 
 
 def make_candles(count=120, start_price=100.0, drift=0.01):
-    start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    start = datetime(2026, 1, 1, tzinfo=UTC)
     candles = []
     price = start_price
     for i in range(count):
@@ -86,7 +86,9 @@ def test_backtest_risk_halt_triggers_on_drawdown():
         fee_bps=0,
         slippage_bps=0,
         max_position_pct=1.0,
-        max_drawdown_pct=0.02,
+        # Two -1% bars before the crossover exit give a 1.99% drawdown (1 - 0.99**2),
+        # so the threshold must sit below that for the halt to trigger.
+        max_drawdown_pct=0.015,
     )
     result = service.run_moving_average_backtest(make_reversal_candles(), config)
 

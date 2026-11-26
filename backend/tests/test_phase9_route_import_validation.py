@@ -6,15 +6,15 @@ def test_api_routes_v3_imports_and_exposes_pilot_routes():
     routes = {route.path for route in module.api_router.routes}
 
     expected = {
-        "/live-trading/pilot-readiness",
-        "/live-trading/pilot/pending-reconciliation",
-        "/live-trading/pilot/resolve-reconciliation",
-        "/live-trading/pilot/report",
-        "/live-trading/pilot/reports",
-        "/live-trading/pilot/expansion-status",
-        "/live-trading/pilot/signoff",
-        "/live-trading/pilot/signoffs",
-        "/live-trading/pilot/unresolved-reconciliation-alerts",
+        "/api/live-trading/pilot-readiness",
+        "/api/live-trading/pilot/pending-reconciliation",
+        "/api/live-trading/pilot/resolve-reconciliation",
+        "/api/live-trading/pilot/report",
+        "/api/live-trading/pilot/reports",
+        "/api/live-trading/pilot/expansion-status",
+        "/api/live-trading/pilot/signoff",
+        "/api/live-trading/pilot/signoffs",
+        "/api/live-trading/pilot/unresolved-reconciliation-alerts",
     }
 
     assert expected.issubset(routes)

@@ -2,8 +2,8 @@ import hashlib
 import logging
 import os
 import random
-from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import aiohttp
 
@@ -35,7 +35,7 @@ class MarketDataService:
     }
     MAX_COINBASE_CANDLES = 300
 
-    def __init__(self, db=None, simulation_mode: Optional[bool] = None, seed: Optional[int | str] = None):
+    def __init__(self, db=None, simulation_mode: bool | None = None, seed: int | str | None = None):
         self.db = db
         self.simulation_mode = (
             simulation_mode
@@ -55,16 +55,16 @@ class MarketDataService:
 
     @staticmethod
     def utc_now() -> datetime:
-        return datetime.now(timezone.utc)
+        return datetime.now(UTC)
 
     @staticmethod
     def parse_timestamp(value: str | datetime) -> datetime:
         if isinstance(value, datetime):
-            return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+            return value if value.tzinfo else value.replace(tzinfo=UTC)
         return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
 
     @staticmethod
-    def candle_checksum(candle: Dict[str, Any]) -> str:
+    def candle_checksum(candle: dict[str, Any]) -> str:
         parts = [
             candle.get("symbol"),
             candle.get("timeframe"),
@@ -82,7 +82,7 @@ class MarketDataService:
         seed_int = int(hashlib.sha256(seed_material.encode("utf-8")).hexdigest()[:16], 16)
         return random.Random(seed_int)
 
-    async def get_current_price(self, symbol: str) -> Dict[str, Any]:
+    async def get_current_price(self, symbol: str) -> dict[str, Any]:
         if self.simulation_mode:
             return self._simulate_price_data(symbol)
 
@@ -110,7 +110,7 @@ class MarketDataService:
             logger.error("Error fetching market data: %s", exc)
             raise MarketDataUnavailable(f"Market data unavailable for {symbol}") from exc
 
-    def _simulate_price_data(self, symbol: str) -> Dict[str, Any]:
+    def _simulate_price_data(self, symbol: str) -> dict[str, Any]:
         rng = self._rng_for(symbol, "ticker", 1)
         base_prices = {"BTC-USD": 45000.0, "ETH-USD": 2500.0}
         base = base_prices.get(symbol, 1000.0)
@@ -126,7 +126,7 @@ class MarketDataService:
             "quality": "synthetic_seeded",
         }
 
-    async def get_historical_data(self, symbol: str, periods: int = 100, timeframe: str = "1m") -> List[Dict[str, Any]]:
+    async def get_historical_data(self, symbol: str, periods: int = 100, timeframe: str = "1m") -> list[dict[str, Any]]:
         candles = await self.get_candles(symbol, timeframe=timeframe, periods=periods)
         return [
             {
@@ -141,7 +141,7 @@ class MarketDataService:
             for candle in candles
         ]
 
-    async def get_candles(self, symbol: str, timeframe: str = "1m", periods: int = 100) -> List[Dict[str, Any]]:
+    async def get_candles(self, symbol: str, timeframe: str = "1m", periods: int = 100) -> list[dict[str, Any]]:
         if periods <= 0:
             return []
         self.granularity_for(timeframe)
@@ -152,14 +152,14 @@ class MarketDataService:
         await self.persist_candles(candles)
         return candles
 
-    def _simulate_candles(self, symbol: str, timeframe: str, periods: int) -> List[Dict[str, Any]]:
+    def _simulate_candles(self, symbol: str, timeframe: str, periods: int) -> list[dict[str, Any]]:
         granularity = self.granularity_for(timeframe)
         rng = self._rng_for(symbol, timeframe, periods)
         base_price = 45000.0 if "BTC" in symbol else 2500.0 if "ETH" in symbol else 1000.0
         now = self.utc_now().replace(second=0, microsecond=0)
         start = now - timedelta(seconds=granularity * periods)
         price = base_price
-        candles: List[Dict[str, Any]] = []
+        candles: list[dict[str, Any]] = []
         for idx in range(periods):
             open_time = start + timedelta(seconds=granularity * idx)
             close_time = open_time + timedelta(seconds=granularity)
@@ -193,7 +193,7 @@ class MarketDataService:
             price = close_price
         return candles
 
-    async def _fetch_coinbase_candles(self, symbol: str, timeframe: str, periods: int) -> List[Dict[str, Any]]:
+    async def _fetch_coinbase_candles(self, symbol: str, timeframe: str, periods: int) -> list[dict[str, Any]]:
         granularity = self.granularity_for(timeframe)
         limit = min(periods, self.MAX_COINBASE_CANDLES)
         end = self.utc_now()
@@ -218,7 +218,7 @@ class MarketDataService:
         now = self.utc_now()
         for row in sorted(raw, key=lambda item: item[0]):
             # Coinbase Exchange candle format: [time, low, high, open, close, volume]
-            open_time = datetime.fromtimestamp(int(row[0]), tz=timezone.utc)
+            open_time = datetime.fromtimestamp(int(row[0]), tz=UTC)
             close_time = open_time + timedelta(seconds=granularity)
             is_stale = (now - close_time).total_seconds() > granularity * 3
             candle = {
@@ -244,7 +244,7 @@ class MarketDataService:
             candles.append(candle)
         return candles[-periods:]
 
-    async def persist_candles(self, candles: List[Dict[str, Any]]) -> None:
+    async def persist_candles(self, candles: list[dict[str, Any]]) -> None:
         if not self.db or not candles:
             return
         collection = self.db.market_candles
@@ -260,7 +260,7 @@ class MarketDataService:
                 upsert=True,
             )
 
-    async def get_stored_candles(self, symbol: str, timeframe: str = "1m", limit: int = 100) -> List[Dict[str, Any]]:
+    async def get_stored_candles(self, symbol: str, timeframe: str = "1m", limit: int = 100) -> list[dict[str, Any]]:
         if not self.db:
             raise MarketDataUnavailable("No database handle configured for stored candle retrieval")
         self.granularity_for(timeframe)

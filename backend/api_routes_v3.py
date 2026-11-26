@@ -1,9 +1,12 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-from api_routes_v2 import api_router
-from auth_core import get_current_user
 from fastapi import Depends, HTTPException
 from pydantic import BaseModel, Field
+
+from api_routes_v2 import api_router
+from app_state import db
+from auth_core import get_current_user
+from runtime_config import DEBUG, OPS_ADMIN_EMAILS, OPS_ADMIN_ENABLED
 from services.alert_service import AlertService
 from services.backtesting_service_v2 import BacktestConfig, BacktestingServiceV2
 from services.coinbase_live_execution_adapter_v2 import CoinbaseLiveExecutionError
@@ -15,13 +18,11 @@ from services.live_trading_service_v2 import LiveTradingServiceV2
 from services.manual_live_pilot_readiness_service_v2 import ManualLivePilotReadinessServiceV2
 from services.manual_live_pilot_review_service_v2 import ManualLivePilotReviewServiceV2
 from services.manual_live_pilot_workflow_service_v2 import ManualLivePilotWorkflowServiceV2
+from services.market_data_service import MarketDataService, MarketDataUnavailable
 from services.mongo_indexes_v2 import MongoIndexServiceV2
 from services.operational_readiness_v2 import OperationalReadinessServiceV2
-from services.market_data_service import MarketDataService, MarketDataUnavailable
 from services.trading_mode_v2 import TradingModeService
 from services.worker_heartbeat_service_v2 import WorkerHeartbeatServiceV2
-from app_state import db
-from runtime_config import DEBUG, OPS_ADMIN_EMAILS, OPS_ADMIN_ENABLED
 
 
 class BacktestRequest(BaseModel):
@@ -125,7 +126,7 @@ async def run_backtest(request: BacktestRequest, current_user: dict = Depends(ge
     try:
         candles = await MarketDataService(db=db).get_candles(request.symbol, timeframe=request.timeframe, periods=request.periods)
     except (ValueError, MarketDataUnavailable) as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     result = BacktestingServiceV2().run_moving_average_backtest(candles, request.to_config())
     result["user_id"] = current_user["id"]
     result["symbol"] = request.symbol
@@ -138,7 +139,7 @@ async def run_walk_forward(request: WalkForwardRequest, current_user: dict = Dep
     try:
         candles = await MarketDataService(db=db).get_candles(request.symbol, timeframe=request.timeframe, periods=request.periods)
     except (ValueError, MarketDataUnavailable) as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     result = BacktestingServiceV2().walk_forward_validation(candles, train_periods=request.train_periods, test_periods=request.test_periods, config=request.to_config())
     result["user_id"] = current_user["id"]
     result["symbol"] = request.symbol
@@ -166,7 +167,7 @@ async def get_live_readonly_snapshot(request: LiveReadonlySymbolsRequest, curren
     try:
         return await LiveReadonlyServiceV2(db).snapshot(current_user["id"], symbols=request.symbols)
     except CoinbaseReadonlyError as exc:
-        raise HTTPException(status_code=503, detail=str(exc))
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @api_router.get("/live-readonly/status")
@@ -179,7 +180,7 @@ async def reconcile_live_readonly(request: LiveReadonlySymbolsRequest, current_u
     try:
         return await LiveReadonlyServiceV2(db).compare_exchange_to_internal(current_user["id"], symbols=request.symbols)
     except CoinbaseReadonlyError as exc:
-        raise HTTPException(status_code=503, detail=str(exc))
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @api_router.get("/live-readonly/orders")
@@ -187,7 +188,7 @@ async def get_live_readonly_orders(current_user: dict = Depends(get_current_user
     try:
         return await LiveReadonlyServiceV2(db).recent_orders(current_user["id"], status=status, limit=limit)
     except CoinbaseReadonlyError as exc:
-        raise HTTPException(status_code=503, detail=str(exc))
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @api_router.get("/live-readonly/fills")
@@ -195,7 +196,7 @@ async def get_live_readonly_fills(current_user: dict = Depends(get_current_user)
     try:
         return await LiveReadonlyServiceV2(db).recent_fills(current_user["id"], product_id=product_id, limit=limit)
     except CoinbaseReadonlyError as exc:
-        raise HTTPException(status_code=503, detail=str(exc))
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @api_router.get("/live-trading/gate")
@@ -253,7 +254,7 @@ async def live_market_buy(request: LiveMarketBuyRequest, current_user: dict = De
     try:
         return await LiveTradingServiceV2(db).place_market_buy(current_user["id"], request.symbol, request.notional_usd, approval_token=request.approval_token, dry_run=request.dry_run)
     except CoinbaseLiveExecutionError as exc:
-        raise HTTPException(status_code=503, detail=str(exc))
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @api_router.post("/live-trading/market-sell")
@@ -261,7 +262,7 @@ async def live_market_sell(request: LiveMarketSellRequest, current_user: dict = 
     try:
         return await LiveTradingServiceV2(db).place_market_sell(current_user["id"], request.symbol, request.base_units, reference_price=request.reference_price, approval_token=request.approval_token, dry_run=request.dry_run)
     except CoinbaseLiveExecutionError as exc:
-        raise HTTPException(status_code=503, detail=str(exc))
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @api_router.get("/live-trading/audits")
@@ -291,7 +292,7 @@ async def ensure_mongo_indexes(current_user: dict = Depends(require_ops_admin)):
 
 @api_router.post("/ops/emergency-halt")
 async def emergency_halt(request: EmergencyHaltRequest, current_user: dict = Depends(get_current_user)):
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     result = await db.bot_configs.update_many({"user_id": current_user["id"]}, {"$set": {"is_active": False, "halt_reason": request.reason, "updated_at": now}})
     await AlertService(db).emit(current_user["id"], "operator_emergency_halt", "critical", f"Emergency halt triggered: {request.reason}", {"modified_count": getattr(result, "modified_count", None), "reason": request.reason})
     return {"status": "halted", "reason": request.reason, "modified_count": getattr(result, "modified_count", None), "timestamp": now}

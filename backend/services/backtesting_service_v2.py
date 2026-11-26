@@ -1,8 +1,8 @@
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from math import sqrt
 from statistics import mean, pstdev
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 
 @dataclass
@@ -31,10 +31,10 @@ class BacktestingServiceV2:
 
     @staticmethod
     def utc_now() -> str:
-        return datetime.now(timezone.utc).isoformat()
+        return datetime.now(UTC).isoformat()
 
     @staticmethod
-    def _timestamp(candle: Dict[str, Any], index: int) -> str:
+    def _timestamp(candle: dict[str, Any], index: int) -> str:
         return str(candle.get("close_time") or candle.get("timestamp") or candle.get("open_time") or index)
 
     @staticmethod
@@ -45,7 +45,7 @@ class BacktestingServiceV2:
             return timestamp[:10]
 
     @staticmethod
-    def _price(candle: Dict[str, Any]) -> float:
+    def _price(candle: dict[str, Any]) -> float:
         return float(candle.get("close", candle.get("price", 0.0)) or 0.0)
 
     @staticmethod
@@ -57,14 +57,14 @@ class BacktestingServiceV2:
         return round(value * 100.0, 6)
 
     @staticmethod
-    def _returns(values: List[float]) -> List[float]:
+    def _returns(values: list[float]) -> list[float]:
         out = []
-        for previous, current in zip(values, values[1:]):
+        for previous, current in zip(values, values[1:], strict=False):
             out.append((current - previous) / previous if previous else 0.0)
         return out
 
     @staticmethod
-    def _max_drawdown(values: List[float]) -> float:
+    def _max_drawdown(values: list[float]) -> float:
         peak = values[0] if values else 0.0
         max_dd = 0.0
         for value in values:
@@ -74,7 +74,7 @@ class BacktestingServiceV2:
         return max_dd
 
     @staticmethod
-    def _profit_factor(trades: List[Dict[str, Any]]) -> float:
+    def _profit_factor(trades: list[dict[str, Any]]) -> float:
         realized = [float(t.get("realized_pnl", 0.0)) for t in trades if t.get("type") == "SELL"]
         gross_profit = sum(pnl for pnl in realized if pnl > 0)
         gross_loss = abs(sum(pnl for pnl in realized if pnl < 0))
@@ -83,12 +83,12 @@ class BacktestingServiceV2:
         return round(gross_profit / gross_loss, 8)
 
     @staticmethod
-    def _moving_average(values: List[float], window: int) -> Optional[float]:
+    def _moving_average(values: list[float], window: int) -> float | None:
         if window <= 0 or len(values) < window:
             return None
         return sum(values[-window:]) / window
 
-    def generate_signal(self, prices: List[float], has_position: bool, config: BacktestConfig) -> Dict[str, Any]:
+    def generate_signal(self, prices: list[float], has_position: bool, config: BacktestConfig) -> dict[str, Any]:
         fast = self._moving_average(prices, config.fast_window)
         slow = self._moving_average(prices, config.slow_window)
         if fast is None or slow is None:
@@ -116,7 +116,7 @@ class BacktestingServiceV2:
             "strategy_version": config.strategy_version,
         }
 
-    def _buy(self, *, cash: float, price: float, timestamp: str, index: int, signal: Dict[str, Any], config: BacktestConfig) -> Dict[str, Any]:
+    def _buy(self, *, cash: float, price: float, timestamp: str, index: int, signal: dict[str, Any], config: BacktestConfig) -> dict[str, Any]:
         notional = cash * config.max_position_pct
         if notional < config.min_trade_notional:
             return {"cash": cash, "units": 0.0, "trade": None}
@@ -143,7 +143,7 @@ class BacktestingServiceV2:
             },
         }
 
-    def _sell(self, *, cash: float, units: float, cost_basis: float, price: float, timestamp: str, index: int, signal: Dict[str, Any], config: BacktestConfig) -> Dict[str, Any]:
+    def _sell(self, *, cash: float, units: float, cost_basis: float, price: float, timestamp: str, index: int, signal: dict[str, Any], config: BacktestConfig) -> dict[str, Any]:
         if units <= 0:
             return {"cash": cash, "units": 0.0, "trade": None}
         fee_rate = config.fee_bps / 10000.0
@@ -171,7 +171,7 @@ class BacktestingServiceV2:
             },
         }
 
-    def run_moving_average_backtest(self, candles: List[Dict[str, Any]], config: Optional[BacktestConfig] = None) -> Dict[str, Any]:
+    def run_moving_average_backtest(self, candles: list[dict[str, Any]], config: BacktestConfig | None = None) -> dict[str, Any]:
         config = config or BacktestConfig()
         normalized = [c for c in candles if self._price(c) > 0]
         if len(normalized) < max(config.slow_window, 2):
@@ -187,10 +187,10 @@ class BacktestingServiceV2:
         units = 0.0
         cost_basis = 0.0
         equity_high = cash
-        daily_start_equity: Dict[str, float] = {}
-        trades: List[Dict[str, Any]] = []
-        equity_curve: List[Dict[str, Any]] = []
-        prices: List[float] = []
+        daily_start_equity: dict[str, float] = {}
+        trades: list[dict[str, Any]] = []
+        equity_curve: list[dict[str, Any]] = []
+        prices: list[float] = []
         halted = False
         halt_reason = ""
 
@@ -292,7 +292,7 @@ class BacktestingServiceV2:
             "generated_at": self.utc_now(),
         }
 
-    def buy_and_hold_benchmark(self, candles: List[Dict[str, Any]], initial_cash: float) -> Dict[str, Any]:
+    def buy_and_hold_benchmark(self, candles: list[dict[str, Any]], initial_cash: float) -> dict[str, Any]:
         prices = [self._price(c) for c in candles if self._price(c) > 0]
         if len(prices) < 2:
             return {"status": "insufficient_data", "roi_pct": 0.0, "final_equity": initial_cash}
@@ -317,11 +317,11 @@ class BacktestingServiceV2:
 
     def walk_forward_validation(
         self,
-        candles: List[Dict[str, Any]],
+        candles: list[dict[str, Any]],
         train_periods: int = 120,
         test_periods: int = 60,
-        config: Optional[BacktestConfig] = None,
-    ) -> Dict[str, Any]:
+        config: BacktestConfig | None = None,
+    ) -> dict[str, Any]:
         config = config or BacktestConfig()
         normalized = [c for c in candles if self._price(c) > 0]
         if train_periods <= 0 or test_periods <= 0:

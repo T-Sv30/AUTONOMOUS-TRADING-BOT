@@ -1,6 +1,7 @@
+from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Mapping, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -9,9 +10,9 @@ class ProductionReleaseCheck:
     passed: bool
     severity: str
     detail: str
-    observed: Optional[Dict[str, Any]] = None
+    observed: dict[str, Any] | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         payload = {
             "name": self.name,
             "passed": self.passed,
@@ -84,10 +85,10 @@ class Phase19ProductionLiveReleaseServiceV2:
 
     @staticmethod
     def utc_now() -> str:
-        return datetime.now(timezone.utc).isoformat()
+        return datetime.now(UTC).isoformat()
 
     @classmethod
-    def policy(cls) -> Dict[str, Any]:
+    def policy(cls) -> dict[str, Any]:
         return {
             "phase": "phase_19_production_live_trading_release_gate",
             "release_scope": "controlled_production_live_release_decision",
@@ -126,7 +127,7 @@ class Phase19ProductionLiveReleaseServiceV2:
         return str(value).strip().lower() in {"1", "true", "yes", "on", "enabled"}
 
     @classmethod
-    def evaluate_release(cls, config: Mapping[str, Any]) -> Dict[str, Any]:
+    def evaluate_release(cls, config: Mapping[str, Any]) -> dict[str, Any]:
         modes = {str(mode).strip() for mode in (config.get("release_modes") or [])}
         runbooks = {str(item).strip() for item in (config.get("runbooks") or [])}
         monitors = {str(item).strip() for item in (config.get("monitors") or [])}
@@ -159,7 +160,7 @@ class Phase19ProductionLiveReleaseServiceV2:
         stale_worker_count = as_int("stale_worker_count")
         open_order_count = as_int("open_order_count")
 
-        checks: List[ProductionReleaseCheck] = [
+        checks: list[ProductionReleaseCheck] = [
             ProductionReleaseCheck(
                 name="phase_prerequisites_complete",
                 passed=(
@@ -320,7 +321,7 @@ class Phase19ProductionLiveReleaseServiceV2:
             "evaluated_at": cls.utc_now(),
         }
 
-    async def collect_live_state(self, user_id: str) -> Dict[str, Any]:
+    async def collect_live_state(self, user_id: str) -> dict[str, Any]:
         pending = await self.db.live_post_submit_reconciliation_requirements.find({"user_id": user_id, "status": "pending"}, {"_id": 0}).limit(100).to_list(100)
         complete_reports = await self.db.manual_live_pilot_reports.find({"user_id": user_id, "status": "complete"}, {"_id": 0}).limit(100).to_list(100)
         signoffs = await self.db.manual_live_pilot_signoffs.find({"user_id": user_id}, {"_id": 0}).limit(100).to_list(100)
@@ -336,7 +337,7 @@ class Phase19ProductionLiveReleaseServiceV2:
             "collected_at": self.utc_now(),
         }
 
-    async def evaluate(self, user_id: str, config: Mapping[str, Any]) -> Dict[str, Any]:
+    async def evaluate(self, user_id: str, config: Mapping[str, Any]) -> dict[str, Any]:
         live_state = await self.collect_live_state(user_id)
         merged = {**dict(config), **live_state}
         result = self.evaluate_release(merged)

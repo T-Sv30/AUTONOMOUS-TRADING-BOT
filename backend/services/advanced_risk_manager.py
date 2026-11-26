@@ -1,6 +1,7 @@
-import numpy as np
-from typing import Dict, List, Any
 import logging
+from typing import Any
+
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -12,7 +13,7 @@ class AdvancedRiskManager:
         self.max_correlation = 0.7  # Max allowed correlation between positions
         self.max_portfolio_heat = 0.15  # Max 15% of portfolio at risk
     
-    def calculate_cvar(self, returns: List[float], confidence: float = 0.95) -> float:
+    def calculate_cvar(self, returns: list[float], confidence: float = 0.95) -> float:
         """Calculate Conditional Value at Risk (CVaR/Expected Shortfall)"""
         if len(returns) < 10:
             return 0.0
@@ -31,8 +32,8 @@ class AdvancedRiskManager:
             logger.error(f"Error calculating CVaR: {e}")
             return 0.0
     
-    def calculate_portfolio_heat(self, positions: List[Dict[str, Any]], 
-                                  total_equity: float) -> Dict[str, Any]:
+    def calculate_portfolio_heat(self, positions: list[dict[str, Any]], 
+                                  total_equity: float) -> dict[str, Any]:
         """Calculate portfolio heat (total risk exposure)"""
         if not positions or total_equity <= 0:
             return {
@@ -49,7 +50,6 @@ class AdvancedRiskManager:
             
             for pos in positions:
                 quantity = pos.get('quantity', 0)
-                avg_price = pos.get('avg_price', 0)
                 
                 # Assume 3% stop loss for heat calculation
                 stop_loss_distance = 0.03
@@ -85,7 +85,7 @@ class AdvancedRiskManager:
                 'status': 'unknown'
             }
     
-    def calculate_correlation(self, prices_a: List[float], prices_b: List[float]) -> float:
+    def calculate_correlation(self, prices_a: list[float], prices_b: list[float]) -> float:
         """Calculate correlation between two price series"""
         if len(prices_a) < 20 or len(prices_b) < 20:
             return 0.0
@@ -108,8 +108,8 @@ class AdvancedRiskManager:
             logger.error(f"Error calculating correlation: {e}")
             return 0.0
     
-    def check_correlation_risk(self, new_symbol: str, existing_positions: List[Dict[str, Any]], 
-                               price_history: Dict[str, List[float]]) -> Dict[str, Any]:
+    def check_correlation_risk(self, new_symbol: str, existing_positions: list[dict[str, Any]], 
+                               price_history: dict[str, list[float]]) -> dict[str, Any]:
         """Check if adding new position would create correlation risk"""
         if not existing_positions:
             return {
@@ -172,9 +172,9 @@ class AdvancedRiskManager:
         
         return round(position_size, 2)
     
-    def get_risk_assessment(self, equity_metrics: Dict[str, float], 
-                           positions: List[Dict[str, Any]],
-                           recent_trades: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def get_risk_assessment(self, equity_metrics: dict[str, float], 
+                           positions: list[dict[str, Any]],
+                           recent_trades: list[dict[str, Any]]) -> dict[str, Any]:
         """Comprehensive risk assessment"""
         total_equity = equity_metrics.get('total_equity', 10000)
         max_equity = equity_metrics.get('max_equity', 10000)

@@ -10,7 +10,6 @@ import pytest
 from services.alert_service import AlertService
 from services.structured_logging import JsonFormatter
 
-
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 
 
@@ -27,8 +26,7 @@ def run_backend_python(code: str, env_updates: dict[str, str | None]):
         cwd=BACKEND_DIR,
         env=env,
         text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         timeout=10,
     )
 

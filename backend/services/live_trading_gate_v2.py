@@ -1,7 +1,7 @@
 import hmac
 import os
 from dataclasses import asdict, dataclass
-from typing import Any, Dict, Optional
+from typing import Any
 
 
 class LiveTradingGateError(RuntimeError):
@@ -16,7 +16,7 @@ class LiveTradingGateConfig:
     allowed_symbols: tuple[str, ...] = ("BTC-USD", "ETH-USD")
     manual_approval_required: bool = True
     signed_approval_required: bool = True
-    approval_token: Optional[str] = None
+    approval_token: str | None = None
 
 
 class LiveTradingGateV2:
@@ -24,7 +24,7 @@ class LiveTradingGateV2:
 
     REQUIRED_ADAPTER = "coinbase_exchange_v2"
 
-    def __init__(self, config: Optional[LiveTradingGateConfig] = None):
+    def __init__(self, config: LiveTradingGateConfig | None = None):
         self.config = config or self.from_env()
 
     @staticmethod
@@ -35,7 +35,7 @@ class LiveTradingGateV2:
         return value.strip().lower() in {"1", "true", "yes", "on"}
 
     @staticmethod
-    def approval_tokens_match(provided: Optional[str], expected: Optional[str]) -> bool:
+    def approval_tokens_match(provided: str | None, expected: str | None) -> bool:
         if not provided or not expected:
             return False
         return hmac.compare_digest(str(provided), str(expected))
@@ -61,7 +61,7 @@ class LiveTradingGateV2:
             approval_token=os.getenv("LIVE_APPROVAL_TOKEN"),
         )
 
-    def describe(self) -> Dict[str, Any]:
+    def describe(self) -> dict[str, Any]:
         payload = asdict(self.config)
         payload["approval_token_configured"] = bool(self.config.approval_token)
         payload.pop("approval_token", None)
@@ -73,13 +73,13 @@ class LiveTradingGateV2:
         self,
         *,
         trading_mode: str,
-        user_config: Optional[Dict[str, Any]],
+        user_config: dict[str, Any] | None,
         symbol: str,
         side: str,
         notional_usd: float,
-        approval_token: Optional[str] = None,
+        approval_token: str | None = None,
         dry_run: bool = False,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         user_config = user_config or {}
         checks = []
 
@@ -113,7 +113,7 @@ class LiveTradingGateV2:
             "gate": self.describe(),
         }
 
-    def safe_preflight(self, **kwargs) -> Dict[str, Any]:
+    def safe_preflight(self, **kwargs) -> dict[str, Any]:
         try:
             return self.preflight(**kwargs)
         except LiveTradingGateError as exc:

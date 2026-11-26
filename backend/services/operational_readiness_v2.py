@@ -1,5 +1,5 @@
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 from services.settings_v2 import SETTINGS, SettingsV2, TradingMode
 
@@ -9,10 +9,10 @@ class OperationalReadinessServiceV2:
 
     @staticmethod
     def utc_now() -> str:
-        return datetime.now(timezone.utc).isoformat()
+        return datetime.now(UTC).isoformat()
 
     @staticmethod
-    def _check(name: str, passed: bool, severity: str, message: str, metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def _check(name: str, passed: bool, severity: str, message: str, metadata: dict[str, Any] | None = None) -> dict[str, Any]:
         return {
             "name": name,
             "passed": passed,
@@ -21,8 +21,8 @@ class OperationalReadinessServiceV2:
             "metadata": metadata or {},
         }
 
-    def validate_environment(self, strict: bool = False, settings: SettingsV2 = SETTINGS) -> Dict[str, Any]:
-        checks: List[Dict[str, Any]] = []
+    def validate_environment(self, strict: bool = False, settings: SettingsV2 = SETTINGS) -> dict[str, Any]:
+        checks: list[dict[str, Any]] = []
 
         checks.append(self._check("jwt_secret_configured", bool(settings.jwt_secret), "critical", "JWT_SECRET must be configured."))
         checks.append(self._check("mongo_url_configured", bool(settings.mongo_url), "critical", "MONGO_URL must be configured."))
@@ -72,14 +72,14 @@ class OperationalReadinessServiceV2:
             "generated_at": self.utc_now(),
         }
 
-    async def database_health(self, db) -> Dict[str, Any]:
+    async def database_health(self, db) -> dict[str, Any]:
         try:
             await db.command("ping")
             return {"status": "ready", "database": db.name, "checked_at": self.utc_now()}
         except Exception as exc:
             return {"status": "blocked", "error": str(exc), "checked_at": self.utc_now()}
 
-    async def readiness(self, db, strict: bool = False) -> Dict[str, Any]:
+    async def readiness(self, db, strict: bool = False) -> dict[str, Any]:
         environment = self.validate_environment(strict=strict)
         database = await self.database_health(db)
         status = "ready" if environment["status"] == "ready" and database["status"] == "ready" else "degraded" if database["status"] == "ready" else "blocked"

@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -73,7 +73,7 @@ async def test_manual_live_pilot_readiness_blocks_when_snapshot_and_reconciliati
 
 @pytest.mark.asyncio
 async def test_manual_live_pilot_readiness_detects_pending_reconciliation_and_halt(monkeypatch):
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     db = FakeDB()
     await db.live_readonly_snapshots.insert_one({"user_id": "user-1", "snapshot_timestamp": now, "created_at": now, "snapshot_hash": "snap-1", "exchange": "coinbase_exchange", "adapter_version": "test", "credential_alias": "coinbase_key_test"})
     await db.live_readonly_reports.insert_one({"user_id": "user-1", "status": "ok", "checked_at": now, "issues": [], "snapshot_hash": "snap-1"})
@@ -98,7 +98,7 @@ async def test_manual_live_pilot_readiness_detects_pending_reconciliation_and_ha
 
 @pytest.mark.asyncio
 async def test_manual_live_pilot_readiness_ready_when_all_checks_pass(monkeypatch):
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     db = FakeDB()
     await db.live_readonly_snapshots.insert_one({"user_id": "user-1", "snapshot_timestamp": now, "created_at": now, "snapshot_hash": "snap-1", "exchange": "coinbase_exchange", "adapter_version": "test", "credential_alias": "coinbase_key_test"})
     await db.live_readonly_reports.insert_one({"user_id": "user-1", "status": "ok", "checked_at": now, "issues": [], "snapshot_hash": "snap-1"})
@@ -120,8 +120,8 @@ async def test_manual_live_pilot_readiness_ready_when_all_checks_pass(monkeypatc
 
 @pytest.mark.asyncio
 async def test_manual_live_pilot_readiness_blocks_stale_reconciliation(monkeypatch):
-    now = datetime.now(timezone.utc).isoformat()
-    stale = (datetime.now(timezone.utc) - timedelta(seconds=1000)).isoformat()
+    now = datetime.now(UTC).isoformat()
+    stale = (datetime.now(UTC) - timedelta(seconds=1000)).isoformat()
     db = FakeDB()
     await db.live_readonly_snapshots.insert_one({"user_id": "user-1", "snapshot_timestamp": now, "created_at": now, "snapshot_hash": "snap-1", "exchange": "coinbase_exchange", "adapter_version": "test", "credential_alias": "coinbase_key_test"})
     await db.live_readonly_reports.insert_one({"user_id": "user-1", "status": "ok", "checked_at": stale, "issues": [], "snapshot_hash": "snap-1"})

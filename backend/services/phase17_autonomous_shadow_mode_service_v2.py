@@ -1,8 +1,9 @@
 import hashlib
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Mapping, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -11,9 +12,9 @@ class ShadowCheck:
     passed: bool
     severity: str
     detail: str
-    observed: Optional[Dict[str, Any]] = None
+    observed: dict[str, Any] | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         payload = {
             "name": self.name,
             "passed": self.passed,
@@ -48,14 +49,14 @@ class Phase17AutonomousShadowModeServiceV2:
 
     @staticmethod
     def utc_now() -> str:
-        return datetime.now(timezone.utc).isoformat()
+        return datetime.now(UTC).isoformat()
 
     @staticmethod
     def canonical_hash(payload: Mapping[str, Any]) -> str:
         return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")).hexdigest()
 
     @classmethod
-    def policy(cls) -> Dict[str, Any]:
+    def policy(cls) -> dict[str, Any]:
         return {
             "phase": "phase_17_autonomous_live_shadow_mode",
             "release_scope": "shadow_mode_only_no_execution",
@@ -91,7 +92,7 @@ class Phase17AutonomousShadowModeServiceV2:
         return str(value).strip().lower() in {"1", "true", "yes", "on", "enabled"}
 
     @classmethod
-    def validate_input(cls, payload: Mapping[str, Any]) -> Dict[str, Any]:
+    def validate_input(cls, payload: Mapping[str, Any]) -> dict[str, Any]:
         strategy = str(payload.get("strategy", "")).strip()
         symbol = str(payload.get("symbol", "")).upper()
         side = str(payload.get("side", "HOLD")).upper()
@@ -108,7 +109,7 @@ class Phase17AutonomousShadowModeServiceV2:
         except (TypeError, ValueError):
             notional_usd = 0.0
 
-        checks: List[ShadowCheck] = [
+        checks: list[ShadowCheck] = [
             ShadowCheck(
                 name="shadow_mode_explicit",
                 passed=payload.get("mode") == "shadow",
@@ -196,7 +197,7 @@ class Phase17AutonomousShadowModeServiceV2:
         }
 
     @classmethod
-    def build_shadow_decision(cls, payload: Mapping[str, Any]) -> Dict[str, Any]:
+    def build_shadow_decision(cls, payload: Mapping[str, Any]) -> dict[str, Any]:
         validation = cls.validate_input(payload)
         strategy = str(payload.get("strategy", "")).strip()
         symbol = str(payload.get("symbol", "")).upper()
@@ -232,7 +233,7 @@ class Phase17AutonomousShadowModeServiceV2:
         return decision
 
     @classmethod
-    def evaluate_shadow_window(cls, summary: Mapping[str, Any]) -> Dict[str, Any]:
+    def evaluate_shadow_window(cls, summary: Mapping[str, Any]) -> dict[str, Any]:
         try:
             days = int(summary.get("shadow_days", 0) or 0)
             decisions = int(summary.get("decision_count", 0) or 0)
@@ -312,12 +313,12 @@ class Phase17AutonomousShadowModeServiceV2:
             "evaluated_at": cls.utc_now(),
         }
 
-    async def record_shadow_decision(self, user_id: str, payload: Mapping[str, Any]) -> Dict[str, Any]:
+    async def record_shadow_decision(self, user_id: str, payload: Mapping[str, Any]) -> dict[str, Any]:
         decision = self.build_shadow_decision(payload)
         await self.db.autonomous_shadow_decisions.insert_one({"user_id": user_id, **decision})
         return decision
 
-    async def record_shadow_window_review(self, user_id: str, summary: Mapping[str, Any]) -> Dict[str, Any]:
+    async def record_shadow_window_review(self, user_id: str, summary: Mapping[str, Any]) -> dict[str, Any]:
         result = self.evaluate_shadow_window(summary)
         await self.db.autonomous_shadow_window_reviews.insert_one({
             "user_id": user_id,

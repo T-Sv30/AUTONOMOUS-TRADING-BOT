@@ -4,9 +4,9 @@ import hashlib
 import hmac
 import os
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import aiohttp
 
@@ -29,7 +29,7 @@ class CoinbaseReadonlyError(RuntimeError):
         self.status = status
         self.retryable = retryable
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {"message": str(self), "kind": self.kind, "status": self.status, "retryable": self.retryable}
 
 
@@ -38,13 +38,13 @@ class CoinbaseReadonlyAdapterV2:
 
     def __init__(
         self,
-        api_key: Optional[str] = None,
-        api_secret: Optional[str] = None,
-        passphrase: Optional[str] = None,
-        base_url: Optional[str] = None,
+        api_key: str | None = None,
+        api_secret: str | None = None,
+        passphrase: str | None = None,
+        base_url: str | None = None,
         session_factory=None,
-        timeout_seconds: Optional[float] = None,
-        max_retries: Optional[int] = None,
+        timeout_seconds: float | None = None,
+        max_retries: int | None = None,
     ):
         self.api_key = api_key if api_key is not None else os.getenv("COINBASE_EXCHANGE_API_KEY")
         self.api_secret = api_secret if api_secret is not None else os.getenv("COINBASE_EXCHANGE_API_SECRET")
@@ -56,7 +56,7 @@ class CoinbaseReadonlyAdapterV2:
 
     @staticmethod
     def utc_now() -> str:
-        return datetime.now(timezone.utc).isoformat()
+        return datetime.now(UTC).isoformat()
 
     @property
     def credentials_configured(self) -> bool:
@@ -87,7 +87,7 @@ class CoinbaseReadonlyAdapterV2:
         digest = hmac.new(secret, message.encode("utf-8"), hashlib.sha256).digest()
         return base64.b64encode(digest).decode("utf-8")
 
-    def _headers(self, method: str, request_path: str, body: str = "") -> Dict[str, str]:
+    def _headers(self, method: str, request_path: str, body: str = "") -> dict[str, str]:
         timestamp = str(time.time())
         return {
             "CB-ACCESS-KEY": str(self.api_key),
@@ -124,19 +124,19 @@ class CoinbaseReadonlyAdapterV2:
                         try:
                             return await response.json()
                         except Exception as exc:
-                            raise CoinbaseReadonlyError(f"Coinbase readonly GET {request_path} returned malformed JSON: {exc}", kind=CoinbaseReadonlyErrorKind.MALFORMED_RESPONSE, retryable=False)
+                            raise CoinbaseReadonlyError(f"Coinbase readonly GET {request_path} returned malformed JSON: {exc}", kind=CoinbaseReadonlyErrorKind.MALFORMED_RESPONSE, retryable=False) from exc
             except CoinbaseReadonlyError as exc:
                 last_error = exc
                 if not exc.retryable or attempt >= attempts:
                     raise
-            except (asyncio.TimeoutError, TimeoutError) as exc:
+            except TimeoutError as exc:
                 last_error = CoinbaseReadonlyError(f"Coinbase readonly GET {request_path} timed out: {exc}", kind=CoinbaseReadonlyErrorKind.TIMEOUT, retryable=True)
                 if attempt >= attempts:
-                    raise last_error
+                    raise last_error from exc
             except aiohttp.ClientError as exc:
                 last_error = CoinbaseReadonlyError(f"Coinbase readonly GET {request_path} network error: {exc}", kind=CoinbaseReadonlyErrorKind.NETWORK, retryable=True)
                 if attempt >= attempts:
-                    raise last_error
+                    raise last_error from exc
 
             await asyncio.sleep(min(0.25 * attempt, 1.0))
 
@@ -148,7 +148,7 @@ class CoinbaseReadonlyAdapterV2:
     async def _get_private(self, request_path: str) -> Any:
         return await self._request_json(request_path, private=True)
 
-    async def get_product_ticker(self, symbol: str) -> Dict[str, Any]:
+    async def get_product_ticker(self, symbol: str) -> dict[str, Any]:
         data = await self._get_public(f"/products/{symbol}/ticker")
         return {
             "symbol": symbol,
@@ -161,7 +161,7 @@ class CoinbaseReadonlyAdapterV2:
             "timestamp": self.utc_now(),
         }
 
-    async def get_accounts(self) -> List[Dict[str, Any]]:
+    async def get_accounts(self) -> list[dict[str, Any]]:
         raw = await self._get_private("/accounts")
         if not isinstance(raw, list):
             raise CoinbaseReadonlyError("Coinbase /accounts returned non-list payload", kind=CoinbaseReadonlyErrorKind.MALFORMED_RESPONSE)
@@ -175,7 +175,7 @@ class CoinbaseReadonlyAdapterV2:
             accounts.append({"id": account.get("id"), "currency": account.get("currency"), "balance": balance, "available": available, "hold": hold, "profile_id": account.get("profile_id")})
         return accounts
 
-    async def get_orders(self, status: str = "all", limit: int = 100) -> List[Dict[str, Any]]:
+    async def get_orders(self, status: str = "all", limit: int = 100) -> list[dict[str, Any]]:
         raw = await self._get_private(f"/orders?status={status}")
         if not isinstance(raw, list):
             raise CoinbaseReadonlyError("Coinbase /orders returned non-list payload", kind=CoinbaseReadonlyErrorKind.MALFORMED_RESPONSE)
@@ -184,7 +184,7 @@ class CoinbaseReadonlyAdapterV2:
             normalized.append({"id": order.get("id"), "product_id": order.get("product_id"), "side": order.get("side"), "type": order.get("type"), "status": order.get("status"), "price": float(order.get("price", 0.0) or 0.0), "size": float(order.get("size", 0.0) or 0.0), "filled_size": float(order.get("filled_size", 0.0) or 0.0), "executed_value": float(order.get("executed_value", 0.0) or 0.0), "fill_fees": float(order.get("fill_fees", 0.0) or 0.0), "created_at": order.get("created_at")})
         return normalized
 
-    async def get_fills(self, product_id: Optional[str] = None, limit: int = 100) -> List[Dict[str, Any]]:
+    async def get_fills(self, product_id: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
         path = "/fills"
         if product_id:
             path += f"?product_id={product_id}"
@@ -196,7 +196,7 @@ class CoinbaseReadonlyAdapterV2:
             normalized.append({"trade_id": fill.get("trade_id"), "order_id": fill.get("order_id"), "product_id": fill.get("product_id"), "side": fill.get("side"), "price": float(fill.get("price", 0.0) or 0.0), "size": float(fill.get("size", 0.0) or 0.0), "fee": float(fill.get("fee", 0.0) or 0.0), "liquidity": fill.get("liquidity"), "created_at": fill.get("created_at")})
         return normalized
 
-    async def snapshot(self, symbols: Optional[List[str]] = None) -> Dict[str, Any]:
+    async def snapshot(self, symbols: list[str] | None = None) -> dict[str, Any]:
         symbols = symbols or ["BTC-USD", "ETH-USD"]
         started_at = self.utc_now()
         tickers = {}

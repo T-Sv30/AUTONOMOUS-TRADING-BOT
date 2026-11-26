@@ -1,5 +1,5 @@
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 os.environ.setdefault("DEBUG", "True")
 os.environ.setdefault("JWT_SECRET", "test-secret-for-worker-heartbeat-more-than-32-chars")
@@ -33,7 +33,7 @@ async def test_worker_heartbeat_records_and_lists_staleness():
         assert workers["workers"][0]["stale"] is False
 
         stale_record = dict(workers["workers"][0])
-        stale_record["last_heartbeat_at"] = (datetime.now(timezone.utc) - timedelta(seconds=120)).isoformat()
+        stale_record["last_heartbeat_at"] = (datetime.now(UTC) - timedelta(seconds=120)).isoformat()
         stale_record["stale_after_seconds"] = 1
         assert WorkerHeartbeatServiceV2.is_stale(stale_record) is True
     finally:
@@ -50,7 +50,7 @@ async def test_bot_ownership_blocks_second_worker_until_expired():
         assert await first.acquire_bot_ownership("user-1", ttl_seconds=30) is True
         assert await second.acquire_bot_ownership("user-1", ttl_seconds=30) is False
 
-        expired_at = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
+        expired_at = (datetime.now(UTC) - timedelta(seconds=1)).isoformat()
         await db.bot_ownership.update_one({"user_id": "user-1"}, {"$set": {"expires_at": expired_at}})
 
         assert await second.acquire_bot_ownership("user-1", ttl_seconds=30) is True
@@ -114,7 +114,7 @@ async def test_stale_worker_report_and_alerts_are_deduplicated():
     try:
         service = WorkerHeartbeatServiceV2(db, worker_id="worker-stale-1")
         await service.beat(role="worker", status="running", active_bots=[])
-        stale_at = (datetime.now(timezone.utc) - timedelta(seconds=120)).isoformat()
+        stale_at = (datetime.now(UTC) - timedelta(seconds=120)).isoformat()
         await db.worker_heartbeats.update_one(
             {"worker_id": "worker-stale-1"},
             {"$set": {"last_heartbeat_at": stale_at, "stale_after_seconds": 1}},

@@ -1,6 +1,7 @@
 name: CI
 
 on:
+  workflow_dispatch:
   pull_request:
   push:
     branches: [main]
@@ -121,7 +122,7 @@ jobs:
       - name: Ruff lint
         run: python -m ruff check .
       - name: Bandit security scan
-        run: python -m bandit -q -r . -x tests
+        run: python -m bandit -q -c pyproject.toml -r . -x ./tests
       - name: Dependency audit
         run: python -m pip_audit -r requirements.txt
 

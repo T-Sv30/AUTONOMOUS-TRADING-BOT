@@ -1,6 +1,7 @@
+from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Mapping, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -9,9 +10,9 @@ class CanaryCheck:
     passed: bool
     severity: str
     detail: str
-    observed: Optional[Dict[str, Any]] = None
+    observed: dict[str, Any] | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         payload = {
             "name": self.name,
             "passed": self.passed,
@@ -45,10 +46,10 @@ class Phase18AutonomousCanaryServiceV2:
 
     @staticmethod
     def utc_now() -> str:
-        return datetime.now(timezone.utc).isoformat()
+        return datetime.now(UTC).isoformat()
 
     @classmethod
-    def policy(cls) -> Dict[str, Any]:
+    def policy(cls) -> dict[str, Any]:
         return {
             "phase": "phase_18_autonomous_live_canary_controls",
             "release_scope": "single_tiny_autonomous_canary_candidate",
@@ -90,7 +91,7 @@ class Phase18AutonomousCanaryServiceV2:
         return str(value).strip().lower() in {"1", "true", "yes", "on", "enabled"}
 
     @classmethod
-    def evaluate_candidate(cls, config: Mapping[str, Any]) -> Dict[str, Any]:
+    def evaluate_candidate(cls, config: Mapping[str, Any]) -> dict[str, Any]:
         strategy = str(config.get("strategy", "")).strip()
         symbols = {str(symbol).upper() for symbol in (config.get("symbols") or [])}
         unknown_symbols = sorted(symbols - cls.ALLOWED_SYMBOLS)
@@ -116,7 +117,7 @@ class Phase18AutonomousCanaryServiceV2:
         unresolved_canary_report_count = as_int("unresolved_canary_report_count")
         active_halt_count = as_int("active_halt_count")
 
-        checks: List[CanaryCheck] = [
+        checks: list[CanaryCheck] = [
             CanaryCheck(
                 name="phase16_design_gate_satisfied",
                 passed=cls.bool_value(config, "phase16_design_gate_satisfied"),
@@ -240,7 +241,7 @@ class Phase18AutonomousCanaryServiceV2:
         }
 
     @classmethod
-    def evaluate_post_canary_review(cls, summary: Mapping[str, Any]) -> Dict[str, Any]:
+    def evaluate_post_canary_review(cls, summary: Mapping[str, Any]) -> dict[str, Any]:
         def as_int(name: str) -> int:
             try:
                 return int(summary.get(name, 0) or 0)
@@ -309,7 +310,7 @@ class Phase18AutonomousCanaryServiceV2:
             "evaluated_at": cls.utc_now(),
         }
 
-    async def record_candidate_review(self, user_id: str, config: Mapping[str, Any]) -> Dict[str, Any]:
+    async def record_candidate_review(self, user_id: str, config: Mapping[str, Any]) -> dict[str, Any]:
         result = self.evaluate_candidate(config)
         await self.db.autonomous_canary_candidate_reviews.insert_one({
             "user_id": user_id,
@@ -319,7 +320,7 @@ class Phase18AutonomousCanaryServiceV2:
         })
         return result
 
-    async def record_post_canary_review(self, user_id: str, summary: Mapping[str, Any]) -> Dict[str, Any]:
+    async def record_post_canary_review(self, user_id: str, summary: Mapping[str, Any]) -> dict[str, Any]:
         result = self.evaluate_post_canary_review(summary)
         await self.db.autonomous_canary_post_reviews.insert_one({
             "user_id": user_id,

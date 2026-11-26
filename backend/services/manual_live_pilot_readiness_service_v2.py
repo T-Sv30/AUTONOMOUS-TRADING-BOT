@@ -1,5 +1,5 @@
-from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 from services.coinbase_live_execution_adapter_v2 import CoinbaseLiveExecutionAdapterV2
 from services.live_readonly_service_v2 import LiveReadonlyServiceV2
@@ -23,33 +23,33 @@ class ManualLivePilotReadinessServiceV2:
 
     @staticmethod
     def utc_now() -> datetime:
-        return datetime.now(timezone.utc)
+        return datetime.now(UTC)
 
     @staticmethod
     def iso(value: datetime) -> str:
-        return value.astimezone(timezone.utc).isoformat()
+        return value.astimezone(UTC).isoformat()
 
     @staticmethod
-    def parse_datetime(value: Any) -> Optional[datetime]:
+    def parse_datetime(value: Any) -> datetime | None:
         if not value:
             return None
         try:
             parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
             if parsed.tzinfo is None:
-                parsed = parsed.replace(tzinfo=timezone.utc)
-            return parsed.astimezone(timezone.utc)
+                parsed = parsed.replace(tzinfo=UTC)
+            return parsed.astimezone(UTC)
         except (TypeError, ValueError):
             return None
 
     @classmethod
-    def is_fresh(cls, value: Any, max_age_seconds: int) -> tuple[bool, Optional[float]]:
+    def is_fresh(cls, value: Any, max_age_seconds: int) -> tuple[bool, float | None]:
         parsed = cls.parse_datetime(value)
         if not parsed:
             return False, None
         age = (cls.utc_now() - parsed).total_seconds()
         return age <= max_age_seconds, age
 
-    async def latest_reconciliation_status(self, user_id: str, max_age_seconds: int = DEFAULT_RECONCILIATION_MAX_AGE_SECONDS) -> Dict[str, Any]:
+    async def latest_reconciliation_status(self, user_id: str, max_age_seconds: int = DEFAULT_RECONCILIATION_MAX_AGE_SECONDS) -> dict[str, Any]:
         latest = await self.db.live_readonly_reports.find_one({"user_id": user_id}, {"_id": 0}, sort=[("checked_at", -1)])
         if not latest:
             return {"status": "missing", "fresh": False, "reason": "no live-readonly reconciliation report found", "max_age_seconds": max_age_seconds}
@@ -64,16 +64,16 @@ class ManualLivePilotReadinessServiceV2:
             "snapshot_hash": latest.get("snapshot_hash"),
         }
 
-    async def pending_post_submit_requirements(self, user_id: str) -> Dict[str, Any]:
+    async def pending_post_submit_requirements(self, user_id: str) -> dict[str, Any]:
         pending = await self.db.live_post_submit_reconciliation_requirements.find({"user_id": user_id, "status": "pending"}, {"_id": 0}).sort("created_at", -1).limit(50).to_list(50)
         return {"pending_count": len(pending), "pending": pending}
 
-    async def active_halts(self, user_id: str) -> Dict[str, Any]:
+    async def active_halts(self, user_id: str) -> dict[str, Any]:
         halts = await self.db.live_halts.find({"active": True}, {"_id": 0}).sort("created_at", -1).limit(50).to_list(50)
         scoped = [halt for halt in halts if halt.get("scope") == "global" or halt.get("user_id") in {None, user_id}]
         return {"active_count": len(scoped), "halts": scoped}
 
-    async def checklist(self, user_id: str) -> Dict[str, Any]:
+    async def checklist(self, user_id: str) -> dict[str, Any]:
         mode = TradingModeService().describe()
         gate = self.gate.describe()
         live_readonly_status = await self.live_readonly.latest_snapshot_status(user_id)

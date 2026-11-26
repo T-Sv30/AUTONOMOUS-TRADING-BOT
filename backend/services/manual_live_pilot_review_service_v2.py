@@ -1,7 +1,7 @@
 import hashlib
 import json
-from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 from services.alert_service import AlertService
 
@@ -22,20 +22,20 @@ class ManualLivePilotReviewServiceV2:
 
     @staticmethod
     def utc_now() -> str:
-        return datetime.now(timezone.utc).isoformat()
+        return datetime.now(UTC).isoformat()
 
     @staticmethod
-    def canonical_hash(payload: Dict[str, Any]) -> str:
+    def canonical_hash(payload: dict[str, Any]) -> str:
         return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")).hexdigest()
 
-    async def latest_signoff(self, user_id: str, live_order_id: str) -> Optional[Dict[str, Any]]:
+    async def latest_signoff(self, user_id: str, live_order_id: str) -> dict[str, Any] | None:
         return await self.db.manual_live_pilot_signoffs.find_one(
             {"user_id": user_id, "live_order_id": live_order_id},
             {"_id": 0},
             sort=[("signed_at", -1)],
         )
 
-    async def unsigned_completed_reports(self, user_id: str, limit: int = 100) -> Dict[str, Any]:
+    async def unsigned_completed_reports(self, user_id: str, limit: int = 100) -> dict[str, Any]:
         reports = await self.db.manual_live_pilot_reports.find({"user_id": user_id, "status": "complete"}, {"_id": 0}).sort("generated_at", -1).limit(limit).to_list(limit)
         unsigned = []
         for report in reports:
@@ -44,14 +44,14 @@ class ManualLivePilotReviewServiceV2:
                 unsigned.append(report)
         return {"user_id": user_id, "unsigned_count": len(unsigned), "unsigned_reports": unsigned, "checked_at": self.utc_now()}
 
-    async def unresolved_reconciliation_requirements(self, user_id: str, limit: int = 100) -> Dict[str, Any]:
+    async def unresolved_reconciliation_requirements(self, user_id: str, limit: int = 100) -> dict[str, Any]:
         pending = await self.db.live_post_submit_reconciliation_requirements.find(
             {"user_id": user_id, "status": "pending"},
             {"_id": 0},
         ).sort("created_at", -1).limit(limit).to_list(limit)
         return {"user_id": user_id, "pending_count": len(pending), "pending": pending, "checked_at": self.utc_now()}
 
-    async def expansion_status(self, user_id: str) -> Dict[str, Any]:
+    async def expansion_status(self, user_id: str) -> dict[str, Any]:
         unresolved = await self.unresolved_reconciliation_requirements(user_id)
         unsigned = await self.unsigned_completed_reports(user_id)
         blockers = []
@@ -69,7 +69,7 @@ class ManualLivePilotReviewServiceV2:
             "unsigned_completed_reports": unsigned,
         }
 
-    async def signoff_report(self, *, user_id: str, live_order_id: str, operator_id: str, decision: str, notes: Optional[str] = None) -> Dict[str, Any]:
+    async def signoff_report(self, *, user_id: str, live_order_id: str, operator_id: str, decision: str, notes: str | None = None) -> dict[str, Any]:
         normalized_decision = str(decision).strip().lower()
         if normalized_decision not in self.VALID_DECISIONS:
             return {"success": False, "status": "invalid_decision", "valid_decisions": sorted(self.VALID_DECISIONS)}
@@ -102,11 +102,11 @@ class ManualLivePilotReviewServiceV2:
         )
         return {"success": True, "status": "signed_off", "signoff": record}
 
-    async def list_signoffs(self, user_id: str, limit: int = 100) -> Dict[str, Any]:
+    async def list_signoffs(self, user_id: str, limit: int = 100) -> dict[str, Any]:
         records = await self.db.manual_live_pilot_signoffs.find({"user_id": user_id}, {"_id": 0}).sort("signed_at", -1).limit(limit).to_list(limit)
         return {"user_id": user_id, "count": len(records), "signoffs": records}
 
-    async def emit_unresolved_reconciliation_alerts(self, user_id: str) -> Dict[str, Any]:
+    async def emit_unresolved_reconciliation_alerts(self, user_id: str) -> dict[str, Any]:
         unresolved = await self.unresolved_reconciliation_requirements(user_id)
         emitted = []
         for item in unresolved["pending"]:

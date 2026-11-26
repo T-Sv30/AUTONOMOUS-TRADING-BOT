@@ -1,6 +1,5 @@
 import asyncio
 import logging
-from typing import Dict
 
 from services.bot_engine import BotEngine
 from services.worker_heartbeat_service_v2 import WorkerHeartbeatServiceV2
@@ -15,8 +14,8 @@ class BotManager:
 
     def __init__(self, db, heartbeat: WorkerHeartbeatServiceV2 | None = None):
         self.db = db
-        self.active_bots: Dict[str, asyncio.Task] = {}
-        self.bot_engines: Dict[str, BotEngine] = {}
+        self.active_bots: dict[str, asyncio.Task] = {}
+        self.bot_engines: dict[str, BotEngine] = {}
         self.running = False
         self.stopping = False
         self.heartbeat = heartbeat or WorkerHeartbeatServiceV2(db)

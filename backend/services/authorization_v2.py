@@ -1,5 +1,6 @@
+from collections.abc import Iterable
 from enum import Enum
-from typing import Any, Dict, Iterable, Set
+from typing import Any
 
 
 class Scope(str, Enum):
@@ -33,22 +34,22 @@ ROLE_SCOPES = {
 }
 
 
-def normalize_values(values: Iterable[Any] | None) -> Set[str]:
+def normalize_values(values: Iterable[Any] | None) -> set[str]:
     return {str(value).strip() for value in (values or []) if str(value).strip()}
 
 
-def normalize_roles(user: Dict[str, Any]) -> Set[str]:
+def normalize_roles(user: dict[str, Any]) -> set[str]:
     roles = normalize_values(user.get("roles"))
     if not roles:
         roles = {Role.USER.value}
     return roles
 
 
-def explicit_scopes(user: Dict[str, Any]) -> Set[str]:
+def explicit_scopes(user: dict[str, Any]) -> set[str]:
     return normalize_values(user.get("scopes"))
 
 
-def effective_scopes(user: Dict[str, Any]) -> Set[str]:
+def effective_scopes(user: dict[str, Any]) -> set[str]:
     roles = normalize_roles(user)
     scopes = explicit_scopes(user)
     for role in roles:
@@ -56,12 +57,12 @@ def effective_scopes(user: Dict[str, Any]) -> Set[str]:
     return scopes
 
 
-def has_scope(user: Dict[str, Any], required_scope: str) -> bool:
+def has_scope(user: dict[str, Any], required_scope: str) -> bool:
     scopes = effective_scopes(user)
     return Scope.ADMIN_ALL.value in scopes or required_scope in scopes
 
 
-def public_user(user: Dict[str, Any]) -> Dict[str, Any]:
+def public_user(user: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": user["id"],
         "email": user["email"],

@@ -1,4 +1,3 @@
-from typing import List
 
 from pydantic import ValidationError
 
@@ -9,7 +8,7 @@ def env_bool(name: str, default: bool = False) -> bool:
     return SettingsV2.env_bool(name, default)
 
 
-def parse_csv_env(name: str, default: str) -> List[str]:
+def parse_csv_env(name: str, default: str) -> list[str]:
     import os
 
     return SettingsV2.parse_csv(os.environ.get(name, default))
@@ -30,12 +29,12 @@ def _raise_runtime_error(exc: ValidationError) -> None:
 
 def validate_origin(origin: str) -> None:
     try:
-        SettingsV2(debug=True, jwt_secret="debug", cors_origins=[origin])
+        SettingsV2(debug=True, jwt_secret="debug", cors_origins=[origin])  # noqa: S106 - throwaway value, only the origin is validated  # nosec B106
     except ValidationError as exc:
         _raise_runtime_error(exc)
 
 
-def validate_cors_origins(origins: List[str], debug: bool) -> None:
+def validate_cors_origins(origins: list[str], debug: bool) -> None:
     try:
         SettingsV2(debug=debug, jwt_secret="debug" if debug else "x" * 32, cors_origins=origins)
     except ValidationError as exc:

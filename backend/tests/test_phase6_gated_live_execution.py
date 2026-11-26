@@ -1,3 +1,5 @@
+from datetime import UTC, datetime
+
 import pytest
 
 from auth_core import UserCreate, UserLogin
@@ -6,7 +8,7 @@ from services.execution_service_v2 import ExecutionServiceV2
 from services.live_order_audit_service_v2 import LiveOrderAuditServiceV2
 from services.live_trading_gate_v2 import LiveTradingGateConfig, LiveTradingGateV2
 from services.live_trading_service_v2 import LiveTradingServiceV2
-from services.trading_mode_v2 import TradingModeService, TradingModeError
+from services.trading_mode_v2 import TradingModeError, TradingModeService
 from services.trading_service_v2 import TradingServiceV2
 
 
@@ -41,6 +43,11 @@ class FakeCollection:
     async def insert_one(self, doc):
         self.docs.append(dict(doc))
 
+    async def update_many(self, query, update):
+        for doc in self.docs:
+            if all(doc.get(k) == v for k, v in query.items()):
+                doc.update(update.get("$set", {}))
+
     async def update_one(self, query, update, upsert=False):
         doc = None
         for existing in self.docs:
@@ -67,6 +74,14 @@ class FakeDB:
         self.bot_configs = FakeCollection()
         self.live_order_audits = FakeCollection()
         self.live_approval_challenges = FakeCollection()
+
+    def __getattr__(self, name):
+        # Services gained collections after this fake was written; create them on demand.
+        if name.startswith("_"):
+            raise AttributeError(name)
+        collection = FakeCollection()
+        setattr(self, name, collection)
+        return collection
 
 
 class FakeLiveAdapter:
@@ -288,6 +303,8 @@ async def test_live_trading_service_actual_order_requires_approval(monkeypatch):
     monkeypatch.setenv("TRADING_MODE", "live-trading")
     db = FakeDB()
     await db.bot_configs.insert_one({"user_id": "user-1", "live_trading_enabled": True})
+    # Pre-submit safety (added after this test) needs a fresh live-readonly reconciliation.
+    await db.live_readonly_reports.insert_one({"user_id": "user-1", "checked_at": datetime.now(UTC).isoformat(), "status": "ok"})
     gate = LiveTradingGateV2(gate_config(live_trading_enabled=True, execution_adapter="coinbase_exchange_v2"))
     service = LiveTradingServiceV2(db, adapter=FakeLiveAdapter(), gate=gate)
 
@@ -295,7 +312,7 @@ async def test_live_trading_service_actual_order_requires_approval(monkeypatch):
     allowed = await service.place_market_buy("user-1", "BTC-USD", 10.0, approval_token="approve-me", dry_run=False)
 
     assert blocked["success"] is False
-    assert allowed["success"] is True
+    assert allowed["success"] is True, allowed
     assert allowed["status"] == "submitted"
 
 

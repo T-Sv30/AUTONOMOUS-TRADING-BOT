@@ -1,5 +1,6 @@
-from app_factory import create_app
 from fastapi.testclient import TestClient
+
+from app_factory import create_app
 
 
 def test_public_readyz_is_coarse_and_non_sensitive():

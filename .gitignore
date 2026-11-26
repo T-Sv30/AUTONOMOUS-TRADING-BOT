@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.pyc
+.coverage
+coverage.xml
+.pytest_cache/
+.venv/
+
+# Secrets
+.env
+
+# Frontend
+node_modules/
+frontend/build/
+
+# Local agent workspace
+.superpowers/

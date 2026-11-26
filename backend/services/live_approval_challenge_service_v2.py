@@ -2,8 +2,8 @@ import hashlib
 import hmac
 import json
 import secrets
-from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Optional
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from runtime_config import JWT_SECRET
 
@@ -23,18 +23,18 @@ class LiveApprovalChallengeServiceV2:
 
     @staticmethod
     def utc_now() -> datetime:
-        return datetime.now(timezone.utc)
+        return datetime.now(UTC)
 
     @staticmethod
     def iso(value: datetime) -> str:
-        return value.astimezone(timezone.utc).isoformat()
+        return value.astimezone(UTC).isoformat()
 
     @staticmethod
-    def canonical_json(payload: Dict[str, Any]) -> str:
+    def canonical_json(payload: dict[str, Any]) -> str:
         return json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
 
     @classmethod
-    def sha256_payload(cls, payload: Dict[str, Any]) -> str:
+    def sha256_payload(cls, payload: dict[str, Any]) -> str:
         return hashlib.sha256(cls.canonical_json(payload).encode("utf-8")).hexdigest()
 
     @staticmethod
@@ -51,10 +51,10 @@ class LiveApprovalChallengeServiceV2:
         user_id: str,
         side: str,
         symbol: str,
-        notional_usd: Optional[float] = None,
-        base_units: Optional[float] = None,
-        reference_price: Optional[float] = None,
-    ) -> Dict[str, Any]:
+        notional_usd: float | None = None,
+        base_units: float | None = None,
+        reference_price: float | None = None,
+    ) -> dict[str, Any]:
         intent = {
             "user_id": user_id,
             "side": cls.normalize_side(side),
@@ -72,7 +72,7 @@ class LiveApprovalChallengeServiceV2:
 
     @classmethod
     def sign(cls, challenge_id: str, payload_hash: str) -> str:
-        message = f"{cls.VERSION}:{challenge_id}:{payload_hash}".encode("utf-8")
+        message = f"{cls.VERSION}:{challenge_id}:{payload_hash}".encode()
         return hmac.new(JWT_SECRET.encode("utf-8"), message, hashlib.sha256).hexdigest()
 
     @classmethod
@@ -85,11 +85,11 @@ class LiveApprovalChallengeServiceV2:
         user_id: str,
         side: str,
         symbol: str,
-        notional_usd: Optional[float] = None,
-        base_units: Optional[float] = None,
-        reference_price: Optional[float] = None,
+        notional_usd: float | None = None,
+        base_units: float | None = None,
+        reference_price: float | None = None,
         expires_in_seconds: int = DEFAULT_EXPIRY_SECONDS,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         now = self.utc_now()
         expires_at = now + timedelta(seconds=max(30, min(int(expires_in_seconds), 900)))
         challenge_id = secrets.token_urlsafe(24)
@@ -119,7 +119,7 @@ class LiveApprovalChallengeServiceV2:
             "used_at": None,
             "version": self.VERSION,
         }
-        await self.db.live_approval_challenges.insert_one(record)
+        await self.db.live_approval_challenges.insert_one(dict(record))  # copy: insert_one adds an ObjectId _id that breaks JSON responses
         return {
             "challenge_id": challenge_id,
             "approval_token": approval_token,
@@ -132,13 +132,13 @@ class LiveApprovalChallengeServiceV2:
         self,
         *,
         user_id: str,
-        approval_token: Optional[str],
+        approval_token: str | None,
         side: str,
         symbol: str,
-        notional_usd: Optional[float] = None,
-        base_units: Optional[float] = None,
-        reference_price: Optional[float] = None,
-    ) -> Dict[str, Any]:
+        notional_usd: float | None = None,
+        base_units: float | None = None,
+        reference_price: float | None = None,
+    ) -> dict[str, Any]:
         if not approval_token or "." not in approval_token:
             raise LiveApprovalChallengeError("valid approval challenge token required")
         challenge_id, provided_signature = approval_token.split(".", 1)
