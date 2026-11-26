@@ -13,11 +13,14 @@ os.environ.setdefault("RUN_MONGO_INDEX_BOOTSTRAP", "false")
 
 import httpx
 import pytest
+from fakes import FakeDB
 
 from app_factory import create_app
 from app_state import db
 from services.authorization_v2 import Scope
 from services.live_approval_challenge_service_v2 import LiveApprovalChallengeError, LiveApprovalChallengeServiceV2
+from services.live_trading_gate_v2 import LiveTradingGateConfig, LiveTradingGateV2
+from services.live_trading_service_v2 import LiveTradingServiceV2
 
 
 async def cleanup(user_id: str | None = None, email: str | None = None) -> None:
@@ -29,6 +32,8 @@ async def cleanup(user_id: str | None = None, email: str | None = None) -> None:
         await db.live_approval_challenges.delete_many({"user_id": user_id})
         await db.live_order_audits.delete_many({"user_id": user_id})
         await db.live_readonly_reports.delete_many({"user_id": user_id})
+        await db.live_order_transitions.delete_many({"user_id": user_id})
+        await db.live_risk_decisions.delete_many({"user_id": user_id})
 
 
 @pytest.mark.asyncio
@@ -119,14 +124,18 @@ async def test_non_dry_run_live_order_requires_valid_signed_challenge():
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
             user_id, headers = await signup_with_execute_scope(client, email)
+            # Pre-submit safety needs a fresh live-readonly reconciliation.
+            await db.live_readonly_reports.insert_one({"user_id": user_id, "checked_at": datetime.now(UTC).isoformat(), "status": "ok"})
 
+            # The live trading service, not the middleware, verifies and consumes the challenge.
             blocked = await client.post(
                 "/api/live-trading/market-buy",
                 headers=headers,
                 json={"symbol": "BTC-USD", "notional_usd": 5.0, "dry_run": False},
             )
-            assert blocked.status_code == 403
-            assert "approval" in blocked.json()["error"]["message"]
+            assert blocked.status_code == 200, blocked.text
+            assert blocked.json()["status"] == "approval_rejected"
+            assert "approval" in blocked.json()["reason"]
 
             challenge = await client.post(
                 "/api/live-approvals/challenge",
@@ -136,23 +145,87 @@ async def test_non_dry_run_live_order_requires_valid_signed_challenge():
             assert challenge.status_code == 200, challenge.text
             approval_token = challenge.json()["approval_token"]
 
-            # Pre-submit safety (added after this test) needs a fresh live-readonly reconciliation.
-            await db.live_readonly_reports.insert_one({"user_id": user_id, "checked_at": datetime.now(UTC).isoformat(), "status": "ok"})
-
-            reached_route = await client.post(
+            reached_gate = await client.post(
                 "/api/live-trading/market-buy",
                 headers=headers,
                 json={"symbol": "BTC-USD", "notional_usd": 5.0, "dry_run": False, "approval_token": approval_token},
             )
-            assert reached_route.status_code == 200, reached_route.text
-            assert reached_route.json()["status"] == "blocked"
+            assert reached_gate.status_code == 200, reached_gate.text
+            assert reached_gate.json()["status"] == "blocked"
 
             replay = await client.post(
                 "/api/live-trading/market-buy",
                 headers=headers,
                 json={"symbol": "BTC-USD", "notional_usd": 5.0, "dry_run": False, "approval_token": approval_token},
             )
-            assert replay.status_code == 403
-            assert "already used" in replay.json()["error"]["message"]
+            assert replay.status_code == 200, replay.text
+            assert replay.json()["status"] == "approval_rejected"
+            assert "already used" in replay.json()["reason"]
     finally:
         await cleanup(user_id=user_id, email=email)
+
+
+class RecordingLiveAdapter:
+    def __init__(self):
+        self.calls = []
+
+    async def place_market_buy(self, symbol, notional_usd, client_order_id=None, dry_run=False):
+        self.calls.append(("BUY", symbol, notional_usd, dry_run))
+        return {"success": True, "status": "dry_run" if dry_run else "submitted", "symbol": symbol, "side": "BUY", "client_order_id": client_order_id}
+
+    async def place_market_sell(self, symbol, base_units, client_order_id=None, dry_run=False):
+        self.calls.append(("SELL", symbol, base_units, dry_run))
+        return {"success": True, "status": "dry_run" if dry_run else "submitted", "symbol": symbol, "side": "SELL", "client_order_id": client_order_id}
+
+
+def open_live_service(monkeypatch, fake_db, adapter):
+    """A live trading service whose gate and pre-submit checks all pass, so only the challenge decides."""
+    monkeypatch.setenv("TRADING_MODE", "live-trading")
+    fake_db.bot_configs.docs.append({"user_id": "u1", "live_trading_enabled": True})
+    fake_db.live_readonly_reports.docs.append({"user_id": "u1", "checked_at": datetime.now(UTC).isoformat(), "status": "ok"})
+    gate = LiveTradingGateV2(LiveTradingGateConfig(live_trading_enabled=True, execution_adapter="coinbase_exchange_v2", signed_approval_required=True))
+    return LiveTradingServiceV2(fake_db, adapter=adapter, gate=gate)
+
+
+@pytest.mark.asyncio
+async def test_service_rejects_non_dry_run_without_valid_challenge(monkeypatch):
+    fake_db = FakeDB()
+    adapter = RecordingLiveAdapter()
+    service = open_live_service(monkeypatch, fake_db, adapter)
+
+    result = await service.place_market_buy("u1", "BTC-USD", 10.0, approval_token="not-a-challenge", dry_run=False)
+
+    assert result["status"] == "approval_rejected", result
+    assert result["success"] is False
+    assert adapter.calls == []
+    assert [audit["status"] for audit in fake_db.live_order_audits.docs] == ["approval_rejected"]
+
+
+@pytest.mark.asyncio
+async def test_service_rejects_challenge_for_a_different_order(monkeypatch):
+    fake_db = FakeDB()
+    adapter = RecordingLiveAdapter()
+    service = open_live_service(monkeypatch, fake_db, adapter)
+    challenge = await LiveApprovalChallengeServiceV2(fake_db).create_challenge(user_id="u1", side="BUY", symbol="BTC-USD", notional_usd=5.0)
+
+    result = await service.place_market_buy("u1", "BTC-USD", 10.0, approval_token=challenge["approval_token"], dry_run=False)
+
+    assert result["status"] == "approval_rejected", result
+    assert adapter.calls == []
+
+
+@pytest.mark.asyncio
+async def test_service_consumes_a_valid_challenge_once(monkeypatch):
+    fake_db = FakeDB()
+    adapter = RecordingLiveAdapter()
+    service = open_live_service(monkeypatch, fake_db, adapter)
+    challenge = await LiveApprovalChallengeServiceV2(fake_db).create_challenge(
+        user_id="u1", side="SELL", symbol="BTC-USD", base_units=0.0001, reference_price=50000.0
+    )
+
+    first = await service.place_market_sell("u1", "BTC-USD", 0.0001, reference_price=50000.0, approval_token=challenge["approval_token"], dry_run=False)
+
+    assert first["status"] == "submitted", first
+    assert adapter.calls == [("SELL", "BTC-USD", 0.0001, False)]
+    stored = await fake_db.live_approval_challenges.find_one({"challenge_id": challenge["challenge_id"]})
+    assert stored["status"] == "used"

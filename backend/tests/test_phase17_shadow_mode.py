@@ -1,3 +1,5 @@
+import pytest
+
 from services.phase17_autonomous_shadow_mode_service_v2 import Phase17AutonomousShadowModeServiceV2
 
 
@@ -6,7 +8,7 @@ def valid_payload(**overrides):
         "mode": "shadow",
         "submit_live_order": False,
         "autonomous_execution_enabled": False,
-        "strategy": "ma_cross_risk_managed_v1",
+        "strategy": "trend_following",
         "symbol": "BTC-USD",
         "side": "BUY",
         "confidence": 0.75,
@@ -136,3 +138,25 @@ def test_phase17_window_review_blocks_insufficient_evidence_and_issues():
     assert "simulated_drawdown_within_limit" in blockers
     assert "error_rate_within_limit" in blockers
     assert "no_halts_or_reconciliation_issues" in blockers
+
+
+@pytest.mark.parametrize("strategy", ["trend_following", "mean_reversion", "breakout"])
+def test_phase17_accepts_every_strategy_the_bot_runs(strategy):
+    result = Phase17AutonomousShadowModeServiceV2.validate_input(valid_payload(strategy=strategy))
+
+    assert "strategy_allowlisted" not in names(result)
+    assert result["valid_shadow_decision_input"] is True
+
+
+def test_phase17_rejects_the_retired_ma_cross_strategy():
+    result = Phase17AutonomousShadowModeServiceV2.validate_input(valid_payload(strategy="ma_cross_risk_managed_v1"))
+
+    assert "strategy_allowlisted" in names(result)
+    assert result["valid_shadow_decision_input"] is False
+
+
+def test_phase17_allowlist_is_the_ensemble_strategy_set():
+    from services.strategy_ensemble_v2 import StrategyEnsembleV2
+
+    names_run = {signal["strategy"] for signal in StrategyEnsembleV2().generate_all([100.0 + i for i in range(120)], has_position=False)}
+    assert set(Phase17AutonomousShadowModeServiceV2.policy()["allowed_strategies"]) == names_run

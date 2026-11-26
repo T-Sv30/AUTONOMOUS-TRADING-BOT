@@ -1,4 +1,6 @@
 from datetime import UTC, datetime, timedelta
+from math import sqrt
+from statistics import mean, pstdev
 
 import pytest
 
@@ -117,3 +119,35 @@ def test_walk_forward_validation_rejects_bad_window_sizes():
     service = BacktestingServiceV2()
     with pytest.raises(ValueError):
         service.walk_forward_validation(make_candles(count=120), train_periods=0, test_periods=30)
+
+
+def expected_sharpe(values, periods_per_year):
+    returns = BacktestingServiceV2._returns(values)
+    return mean(returns) / pstdev(returns) * sqrt(periods_per_year)
+
+
+@pytest.mark.parametrize("timeframe,periods_per_year", [("1h", 8760.0), ("1d", 365.0), ("1m", 525600.0)])
+def test_backtest_sharpe_annualizes_by_the_run_timeframe(timeframe, periods_per_year):
+    from api_routes_v3 import BacktestRequest
+
+    config = BacktestRequest(timeframe=timeframe, fast_window=3, slow_window=8, fee_bps=0, slippage_bps=0, max_position_pct=0.5).to_config()
+    candles = make_reversal_candles()
+    result = BacktestingServiceV2().run_moving_average_backtest(candles, config)
+
+    equities = [point["equity"] for point in result["equity_curve"]]
+    strategy_returns = BacktestingServiceV2._returns(equities)
+    assert pstdev(strategy_returns) > 0
+    assert abs(result["summary"]["sharpe"] - round(expected_sharpe(equities, periods_per_year), 6)) < 1e-6
+
+    prices = [candle["close"] for candle in candles]
+    assert abs(result["benchmark"]["sharpe"] - round(expected_sharpe(prices, periods_per_year), 6)) < 1e-6
+
+
+def test_periods_per_year_follows_market_data_granularity():
+    from services.backtesting_service_v2 import periods_per_year
+
+    assert periods_per_year("1h") == pytest.approx(8760.0)
+    assert periods_per_year("1d") == pytest.approx(365.0)
+    assert periods_per_year("5m") == pytest.approx(105120.0)
+    with pytest.raises(ValueError):
+        periods_per_year("2m")
