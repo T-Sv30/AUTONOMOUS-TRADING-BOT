@@ -933,3 +933,7 @@ Recommended next sequence:
 Current final label:
 
 Production-readiness framework complete; production-live approval still requires gate evidence.
+
+## License
+
+All rights reserved. See [LICENSE](LICENSE). The source is public so that people can review the code that handles their exchange keys. It is not open source, and using, modifying or redistributing it needs written permission.

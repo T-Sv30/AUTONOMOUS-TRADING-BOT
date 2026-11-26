@@ -4,7 +4,6 @@ version = "0.1.0"
 description = "Full-stack cryptocurrency trading research platform with paper trading, risk controls, reconciliation, and staged live-readiness gates."
 readme = "README.md"
 requires-python = ">=3.12"
-license = { text = "MIT" }
 authors = [
     { name = "SvilarT" },
 ]
