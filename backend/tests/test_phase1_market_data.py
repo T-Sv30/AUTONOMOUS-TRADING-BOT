@@ -55,8 +55,8 @@ def test_timeframe_granularity_validation():
 
 @pytest.mark.asyncio
 async def test_seeded_simulation_candles_are_deterministic_for_prices():
-    first = MarketDataService(simulation_mode=True, seed="same-seed")
-    second = MarketDataService(simulation_mode=True, seed="same-seed")
+    first = MarketDataService(source="simulated", seed="same-seed")
+    second = MarketDataService(source="simulated", seed="same-seed")
 
     first_candles = await first.get_candles("BTC-USD", timeframe="5m", periods=5)
     second_candles = await second.get_candles("BTC-USD", timeframe="5m", periods=5)
@@ -71,7 +71,7 @@ async def test_seeded_simulation_candles_are_deterministic_for_prices():
 @pytest.mark.asyncio
 async def test_candles_are_persisted_and_retrievable_from_db():
     db = FakeDB()
-    service = MarketDataService(db=db, simulation_mode=True, seed="persist-seed")
+    service = MarketDataService(db=db, source="simulated", seed="persist-seed")
 
     candles = await service.get_candles("ETH-USD", timeframe="15m", periods=3)
     stored = await service.get_stored_candles("ETH-USD", timeframe="15m", limit=10)
@@ -84,7 +84,7 @@ async def test_candles_are_persisted_and_retrievable_from_db():
 
 @pytest.mark.asyncio
 async def test_get_historical_data_returns_legacy_price_shape_with_metadata():
-    service = MarketDataService(simulation_mode=True, seed="legacy-shape")
+    service = MarketDataService(source="simulated", seed="legacy-shape")
     history = await service.get_historical_data("BTC-USD", periods=4, timeframe="1h")
 
     assert len(history) == 4
@@ -94,6 +94,11 @@ async def test_get_historical_data_returns_legacy_price_shape_with_metadata():
 
 @pytest.mark.asyncio
 async def test_stored_candles_requires_database_handle():
-    service = MarketDataService(simulation_mode=True)
+    service = MarketDataService(source="simulated")
     with pytest.raises(MarketDataUnavailable):
         await service.get_stored_candles("BTC-USD")
+
+
+def test_market_data_service_reads_source_from_env(monkeypatch):
+    monkeypatch.setenv("MARKET_DATA_SOURCE", "replay")
+    assert MarketDataService().source == "replay"
