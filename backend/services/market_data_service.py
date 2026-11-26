@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import aiohttp
+from pymongo import UpdateOne
 
 logger = logging.getLogger(__name__)
 
@@ -154,6 +155,8 @@ class MarketDataService:
     async def get_current_price(self, symbol: str) -> dict[str, Any]:
         if self.source == "simulated":
             return self._simulate_price_data(symbol)
+        if self.source == "replay":
+            return await self._replay_price_data(symbol)
 
         try:
             async with self._get_session().get(f"{self.base_url}/products/{symbol}/ticker") as response:
@@ -179,6 +182,23 @@ class MarketDataService:
         except Exception as exc:
             logger.error("Error fetching market data: %s", exc)
             raise MarketDataUnavailable(f"Market data unavailable for {symbol}") from exc
+
+    async def _replay_price_data(self, symbol: str) -> dict[str, Any]:
+        stored = await self.get_stored_candles(symbol, limit=1)
+        if not stored:
+            raise MarketDataUnavailable(f"No stored candles to replay for {symbol}")
+        last = stored[-1]
+        return {
+            "symbol": symbol,
+            "price": float(last["close"]),
+            "bid": None,
+            "ask": None,
+            "volume": float(last.get("volume", 0)),
+            "timestamp": last["close_time"],
+            "simulation": bool(last.get("simulation", False)),
+            "source": "replay",
+            "quality": "replayed",
+        }
 
     def _simulate_price_data(self, symbol: str) -> dict[str, Any]:
         now = self.clock()
@@ -217,6 +237,11 @@ class MarketDataService:
         if periods <= 0:
             return []
         self.granularity_for(timeframe)
+        if self.source == "replay":
+            stored = await self.get_stored_candles(symbol, timeframe=timeframe, limit=periods)
+            if not stored:
+                raise MarketDataUnavailable(f"No stored candles to replay for {symbol}")
+            return stored
         if self.source == "simulated":
             candles = self._simulate_candles(symbol, timeframe, periods)
         else:
@@ -315,11 +340,20 @@ class MarketDataService:
         return candles[-periods:]
 
     async def persist_candles(self, candles: list[dict[str, Any]]) -> None:
-        if not self.db or not candles:
+        """Store only candles newer than the latest stored one, in a single unordered bulk write."""
+        if self.db is None or not candles:
             return
         collection = self.db.market_candles
-        for candle in candles:
-            await collection.update_one(
+        first = candles[0]
+        latest = await collection.find_one(
+            {"symbol": first["symbol"], "exchange": first["exchange"], "timeframe": first["timeframe"]},
+            {"_id": 0, "open_time": 1},
+            sort=[("open_time", -1)],
+        )
+        # open_time values are ISO strings in one format, so string order is time order.
+        latest_open = latest["open_time"] if latest else None
+        ops = [
+            UpdateOne(
                 {
                     "symbol": candle["symbol"],
                     "exchange": candle["exchange"],
@@ -329,9 +363,14 @@ class MarketDataService:
                 {"$set": candle},
                 upsert=True,
             )
+            for candle in candles
+            if latest_open is None or candle["open_time"] > latest_open
+        ]
+        if ops:
+            await collection.bulk_write(ops, ordered=False)
 
     async def get_stored_candles(self, symbol: str, timeframe: str = "1m", limit: int = 100) -> list[dict[str, Any]]:
-        if not self.db:
+        if self.db is None:
             raise MarketDataUnavailable("No database handle configured for stored candle retrieval")
         self.granularity_for(timeframe)
         cursor = (

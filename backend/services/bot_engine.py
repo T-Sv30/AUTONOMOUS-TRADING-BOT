@@ -5,24 +5,27 @@ from datetime import UTC, datetime
 from services.alert_service import AlertService
 from services.execution_control_v2 import ExecutionControlV2
 from services.execution_service_v2 import ExecutionServiceV2
-from services.market_data_service import MarketDataService
+from services.market_data_service import MarketDataService, MarketDataUnavailable
+from services.paper_execution_adapter_v2 import PaperExecutionAdapterV2
 from services.portfolio_service_v2 import PortfolioServiceV2
 from services.risk_guard_v2 import RiskGuardV2
 from services.signal_planner_v2 import SignalPlannerV2
 from services.structured_logging import log_event
+from services.trading_service_v2 import TradingServiceV2
 from services.trading_mode_v2 import TradingModeError, TradingModeService
 
 logger = logging.getLogger(__name__)
 
 
 class BotEngine:
-    def __init__(self, db):
+    def __init__(self, db, market: MarketDataService | None = None):
         self.db = db
         self.alerts = AlertService(db)
-        self.execution = ExecutionServiceV2()
+        self.market = market or MarketDataService(db=db)
+        # Decisions and paper fills read prices through the same market service.
+        self.execution = ExecutionServiceV2(TradingServiceV2(PaperExecutionAdapterV2(market_data=self.market)))
         self.execution_control = ExecutionControlV2(db)
         self.portfolio = PortfolioServiceV2(db)
-        self.market = MarketDataService()
         self.planner = SignalPlannerV2()
         self.mode = TradingModeService()
         self.running = False
@@ -42,6 +45,7 @@ class BotEngine:
 
     async def stop(self):
         self.running = False
+        await self.market.close()
 
     async def cycle(self, user_id: str):
         config = await self.db.bot_configs.find_one({"user_id": user_id})
@@ -74,7 +78,10 @@ class BotEngine:
         for symbol in symbols:
             positions = await self.portfolio.get_positions(user_id)
             state = await self.db.portfolio_state.find_one({"user_id": user_id}) or {}
-            await self.process_symbol(user_id, symbol, positions, state, risk, price_map)
+            try:
+                await self.process_symbol(user_id, symbol, positions, state, risk, price_map)
+            except MarketDataUnavailable as exc:
+                await self.report_market_data_failure(user_id, symbol, exc)
 
     async def halt_bot(self, user_id: str, reason: str, metrics=None):
         await self.db.bot_configs.update_one(
@@ -91,9 +98,12 @@ class BotEngine:
                 current = await self.market.get_current_price(symbol)
                 price_map[symbol] = float(current.get("price", 0.0))
             except Exception as exc:
-                log_event(logger, logging.WARNING, "market_data_failed", user_id=user_id, symbol=symbol, error=str(exc))
-                await self.alerts.emit(user_id, "market_data_failed", "warning", f"Market data unavailable for {symbol}", {"symbol": symbol, "error": str(exc)})
+                await self.report_market_data_failure(user_id, symbol, exc)
         return price_map
+
+    async def report_market_data_failure(self, user_id, symbol, exc):
+        log_event(logger, logging.WARNING, "market_data_failed", user_id=user_id, symbol=symbol, error=str(exc))
+        await self.alerts.emit(user_id, "market_data_failed", "warning", f"Market data unavailable for {symbol}", {"symbol": symbol, "error": str(exc)})
 
     async def process_symbol(self, user_id, symbol, positions, state, risk: RiskGuardV2, price_map):
         hist = await self.market.get_historical_data(symbol, periods=120)
