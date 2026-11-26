@@ -18,6 +18,8 @@ class LiveOrderState(str, Enum):
     APPROVAL_REQUIRED = "approval_required"
     APPROVED = "approved"
     SUBMITTED = "submitted"
+    # The order was sent but the exchange's answer was lost. Resolve by client order id lookup; never retry blind.
+    SUBMIT_UNKNOWN = "submit_unknown"
     ACKNOWLEDGED = "acknowledged"
     PARTIALLY_FILLED = "partially_filled"
     FILLED = "filled"
@@ -44,8 +46,9 @@ ALLOWED_TRANSITIONS = {
     LiveOrderState.GATE_CHECKED.value: {LiveOrderState.RISK_CHECKED.value, LiveOrderState.FAILED.value, LiveOrderState.HALTED.value},
     LiveOrderState.RISK_CHECKED.value: {LiveOrderState.APPROVAL_REQUIRED.value, LiveOrderState.APPROVED.value, LiveOrderState.FAILED.value, LiveOrderState.HALTED.value},
     LiveOrderState.APPROVAL_REQUIRED.value: {LiveOrderState.APPROVED.value, LiveOrderState.FAILED.value, LiveOrderState.HALTED.value},
-    LiveOrderState.APPROVED.value: {LiveOrderState.SUBMITTED.value, LiveOrderState.FAILED.value, LiveOrderState.HALTED.value},
-    LiveOrderState.SUBMITTED.value: {LiveOrderState.ACKNOWLEDGED.value, LiveOrderState.REJECTED.value, LiveOrderState.FAILED.value, LiveOrderState.HALTED.value},
+    LiveOrderState.APPROVED.value: {LiveOrderState.SUBMITTED.value, LiveOrderState.SUBMIT_UNKNOWN.value, LiveOrderState.FAILED.value, LiveOrderState.HALTED.value},
+    LiveOrderState.SUBMITTED.value: {LiveOrderState.ACKNOWLEDGED.value, LiveOrderState.SUBMIT_UNKNOWN.value, LiveOrderState.REJECTED.value, LiveOrderState.FAILED.value, LiveOrderState.HALTED.value},
+    LiveOrderState.SUBMIT_UNKNOWN.value: {LiveOrderState.ACKNOWLEDGED.value, LiveOrderState.FILLED.value, LiveOrderState.REJECTED.value, LiveOrderState.FAILED.value},
     LiveOrderState.ACKNOWLEDGED.value: {LiveOrderState.PARTIALLY_FILLED.value, LiveOrderState.FILLED.value, LiveOrderState.REJECTED.value, LiveOrderState.CANCELED.value, LiveOrderState.FAILED.value, LiveOrderState.HALTED.value},
     LiveOrderState.PARTIALLY_FILLED.value: {LiveOrderState.FILLED.value, LiveOrderState.CANCELED.value, LiveOrderState.RECONCILIATION_PENDING.value, LiveOrderState.FAILED.value, LiveOrderState.HALTED.value},
     LiveOrderState.FILLED.value: {LiveOrderState.RECONCILIATION_PENDING.value, LiveOrderState.FAILED.value, LiveOrderState.HALTED.value},

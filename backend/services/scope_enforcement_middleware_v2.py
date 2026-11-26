@@ -31,6 +31,9 @@ class ScopeEnforcementMiddlewareV2(BaseHTTPMiddleware):
         if path == "/api/live-approvals/challenge":
             return Scope.TRADING_LIVE_EXECUTE.value
 
+        if path.startswith("/api/live-trading/orders/") and path.endswith("/resolve"):
+            return Scope.TRADING_LIVE_EXECUTE.value
+
         if path in LIVE_ORDER_PATHS and method == "POST":
             if self.is_non_dry_run_live_order(method, path, body):
                 return Scope.TRADING_LIVE_EXECUTE.value

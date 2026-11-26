@@ -103,8 +103,11 @@ class LivePreSubmitSafetyServiceV2:
         await self.db.live_halts.insert_one(dict(record))  # copy: insert_one adds an ObjectId _id that breaks JSON responses
         return record
 
-    async def release_halts(self, *, user_id: str | None, scope: str, released_by: str) -> int:
-        """Deactivate active halts of one scope. Returns how many were released."""
+    async def release_halts(self, *, user_id: str | None, scope: str, released_by: str, reason: str | None = None) -> int:
+        """Deactivate active halts of one scope, optionally only those with this exact reason.
+
+        Returns how many were released.
+        """
         if scope not in self.HALT_SCOPES:
             raise ValueError(f"halt scope must be one of {self.HALT_SCOPES}")
         query: dict[str, Any] = {"scope": scope, "active": True}
@@ -112,6 +115,8 @@ class LivePreSubmitSafetyServiceV2:
             if not user_id:
                 raise ValueError("user_id is required to release a user halt")
             query["user_id"] = user_id
+        if reason is not None:
+            query["reason"] = reason
         result = await self.db.live_halts.update_many(
             query,
             {"$set": {"active": False, "released_at": self.utc_now().isoformat(), "released_by": released_by}},

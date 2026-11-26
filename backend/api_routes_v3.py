@@ -287,6 +287,16 @@ async def live_market_sell(request: LiveMarketSellRequest, current_user: dict = 
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
+@api_router.post("/live-trading/orders/{live_order_id}/resolve")
+async def resolve_unknown_live_order(live_order_id: str, current_user: dict = Depends(get_current_user)):
+    result = await LiveTradingServiceV2(db).resolve_unknown(current_user["id"], live_order_id)
+    if result["status"] == "not_found":
+        raise HTTPException(status_code=404, detail="live order not found")
+    if result["status"] == "not_unknown":
+        raise HTTPException(status_code=409, detail=f"live order is {result.get('state')}, not submit_unknown")
+    return result
+
+
 @api_router.get("/live-trading/audits")
 async def get_live_order_audits(current_user: dict = Depends(get_current_user), limit: int = 100):
     return {"audits": await LiveTradingServiceV2(db).list_audits(current_user["id"], limit=limit)}
