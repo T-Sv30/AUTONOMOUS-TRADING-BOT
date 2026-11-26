@@ -183,7 +183,12 @@ class FakeSession:
         self.closed = False
 
     def get(self, url, params=None):
-        payload = self.rows if url.endswith("/candles") else self.ticker
+        payload = self.ticker
+        if url.endswith("/candles"):
+            # Honour the requested window like the exchange: start exclusive, end inclusive.
+            start = MarketDataService.parse_timestamp(params["start"]).timestamp()
+            end = MarketDataService.parse_timestamp(params["end"]).timestamp()
+            payload = [row for row in self.rows if start < row[0] <= end]
         return FakeGet(FakeResponse(payload, self.status), self.error)
 
     async def close(self):
