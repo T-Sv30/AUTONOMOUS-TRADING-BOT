@@ -8,7 +8,14 @@ class FakeCursor:
         self.docs = docs
 
     def sort(self, key, direction=1):
-        self.docs = sorted(self.docs, key=lambda doc: doc.get(key, ""), reverse=direction == -1)
+        # Motor accepts sort("field", direction) and sort([("field", direction), ...]).
+        keys = [(key, direction)] if isinstance(key, str) else list(key)
+        for field, field_direction in reversed(keys):
+            self.docs = sorted(self.docs, key=lambda doc, f=field: doc.get(f, ""), reverse=field_direction == -1)
+        return self
+
+    def skip(self, count):
+        self.docs = self.docs[count:]
         return self
 
     def limit(self, limit):
