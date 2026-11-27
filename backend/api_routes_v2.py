@@ -126,7 +126,7 @@ async def get_technical_indicators(symbol: str, current_user: dict = Depends(get
 
 
 @api_router.get("/market-data/{symbol}")
-async def get_market_data(symbol: str, current_user: dict = Depends(get_current_user)):
+async def get_market_data(symbol: str):
     market = MarketDataService(db=db)
     try:
         return await market.get_current_price(symbol)
