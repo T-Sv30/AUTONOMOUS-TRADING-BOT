@@ -8,9 +8,11 @@ from auth_core import TokenResponse, UserCreate, UserLogin, get_current_user, lo
 from services.advanced_risk_manager import AdvancedRiskManager
 from services.market_data_service import MarketDataService
 from services.paper_execution_adapter_v2 import PaperExecutionAdapterV2
-from services.portfolio_service_v2 import PortfolioServiceV2
+from services.portfolio_service_v2 import FILLED_STATUSES, PortfolioServiceV2
 
 api_router = APIRouter(prefix="/api")
+
+LEGACY_STARTING_CASH = 10000.0
 
 
 class BotConfigUpdate(BaseModel):
@@ -170,26 +172,30 @@ async def get_advanced_risk_assessment(current_user: dict = Depends(get_current_
 
 @api_router.get("/performance/metrics")
 async def get_performance_metrics(current_user: dict = Depends(get_current_user)):
-    trades = await portfolio().get_trades(current_user["id"], limit=1000)
-    total_trades = len(trades)
-    winning = [t for t in trades if t.get("realized_pnl", t.get("pnl", 0)) > 0]
-    losing = [t for t in trades if t.get("realized_pnl", t.get("pnl", 0)) < 0]
-    win_rate = (len(winning) / total_trades * 100) if total_trades else 0
-    avg_profit = sum(t.get("realized_pnl", t.get("pnl", 0)) for t in winning) / len(winning) if winning else 0
-    avg_loss = sum(t.get("realized_pnl", t.get("pnl", 0)) for t in losing) / len(losing) if losing else 0
-    total_profit = sum(t.get("realized_pnl", t.get("pnl", 0)) for t in winning)
-    total_loss = sum(t.get("realized_pnl", t.get("pnl", 0)) for t in losing)
-    metrics = await db.risk_metrics.find_one({"user_id": current_user["id"]}, {"_id": 0}, sort=[("timestamp", -1)])
+    """Round-trip metrics over filled trades; pending claims and rejected attempts are not trades."""
+    user_id = current_user["id"]
+    filled = await db.trades_v2.find({"user_id": user_id, "status": {"$in": list(FILLED_STATUSES)}}, {"_id": 0}).to_list(None)
+    # A round trip closes on a SELL; its realized_pnl decides the win.
+    closed = [t for t in filled if t.get("side") == "SELL"]
+    pnls = [float(t.get("realized_pnl") or 0.0) for t in closed]
+    winning = [pnl for pnl in pnls if pnl > 0]
+    losing = [pnl for pnl in pnls if pnl < 0]
+    win_rate = (len(winning) / len(closed) * 100) if closed else 0
+    total_profit = sum(winning)
+    total_loss = sum(losing)
+    metrics = await db.risk_metrics.find_one({"user_id": user_id}, {"_id": 0}, sort=[("timestamp", -1)])
     if not metrics:
-        metrics = await portfolio().update_risk_snapshot(current_user["id"])
-    roi = ((metrics.get("total_equity", 10000.0) - 10000.0) / 10000.0 * 100)
+        metrics = await portfolio().update_risk_snapshot(user_id)
+    state = await db.portfolio_state.find_one({"user_id": user_id}, {"_id": 0}) or {}
+    starting_cash = float(state.get("starting_cash") or LEGACY_STARTING_CASH)  # accounts opened before starting_cash was stored
+    roi = (float(metrics.get("total_equity", starting_cash)) - starting_cash) / starting_cash * 100
     return {
-        "total_trades": total_trades,
+        "total_trades": len(filled),
         "winning_trades": len(winning),
         "losing_trades": len(losing),
         "win_rate": round(win_rate, 2),
-        "avg_profit": round(avg_profit, 2),
-        "avg_loss": round(avg_loss, 2),
+        "avg_profit": round(total_profit / len(winning), 2) if winning else 0,
+        "avg_loss": round(total_loss / len(losing), 2) if losing else 0,
         "total_profit": round(total_profit, 2),
         "total_loss": round(total_loss, 2),
         "net_pnl": round(total_profit + total_loss, 2),
