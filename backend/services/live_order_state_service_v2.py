@@ -93,12 +93,13 @@ class LiveOrderStateServiceV2:
     async def latest_transition(self, order_id: str) -> dict[str, Any] | None:
         return await self.db.live_order_transitions.find_one({"order_id": order_id}, {"_id": 0}, sort=[("sequence", -1)])
 
-    async def latest_unresolved_for_user(self, user_id: str) -> dict[str, Any] | None:
-        return await self.db.live_order_transitions.find_one(
-            {"user_id": user_id, "is_latest": True, "state": {"$in": sorted(UNRESOLVED_STATES)}},
-            {"_id": 0},
-            sort=[("created_at", -1)],
-        )
+    async def latest_unresolved_for_user(self, user_id: str, exclude_order_id: str | None = None) -> dict[str, Any] | None:
+        query: dict[str, Any] = {"user_id": user_id, "is_latest": True, "state": {"$in": sorted(UNRESOLVED_STATES)}}
+        if exclude_order_id:
+            # Exclude in the query, not after fetching: the order being checked is always the newest,
+            # so skipping the latest result would hide an older unresolved order behind it.
+            query["order_id"] = {"$ne": exclude_order_id}
+        return await self.db.live_order_transitions.find_one(query, {"_id": 0}, sort=[("created_at", -1)])
 
     async def has_unresolved_for_user(self, user_id: str) -> bool:
         return bool(await self.latest_unresolved_for_user(user_id))

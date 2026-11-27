@@ -96,7 +96,7 @@ class LiveManualOrderLifecycleServiceV2:
     async def pre_submit_checked(self, *, user_id: str, live_order_id: str, dry_run: bool) -> dict[str, Any]:
         if dry_run:
             return {"allowed": True, "dry_run": True, "checks": []}
-        result = await self.pre_submit.safe_check(user_id)
+        result = await self.pre_submit.safe_check(user_id, exclude_order_id=live_order_id)
         if not result.get("allowed"):
             await self.states.transition(
                 order_id=live_order_id,

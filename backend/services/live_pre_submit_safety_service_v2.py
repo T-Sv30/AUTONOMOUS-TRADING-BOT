@@ -56,7 +56,7 @@ class LivePreSubmitSafetyServiceV2:
         except ValueError:
             return None
 
-    async def check(self, user_id: str) -> dict[str, Any]:
+    async def check(self, user_id: str, exclude_order_id: str | None = None) -> dict[str, Any]:
         checks = []
 
         async def add(name: str, passed: bool, reason: str, metadata: dict[str, Any] | None = None):
@@ -67,7 +67,7 @@ class LivePreSubmitSafetyServiceV2:
         halt = await self.halt_record(user_id)
         await add("no_active_halt", not bool(halt), "active live trading halt blocks order submission", {"halt": halt or {}})
 
-        unresolved = await self.orders.latest_unresolved_for_user(user_id)
+        unresolved = await self.orders.latest_unresolved_for_user(user_id, exclude_order_id=exclude_order_id)
         await add("no_unresolved_live_order", not bool(unresolved), "unresolved live order blocks new live order submission", {"order": unresolved or {}})
 
         require_fresh = self.env_bool("LIVE_REQUIRE_FRESH_RECONCILIATION", True)
@@ -90,9 +90,9 @@ class LivePreSubmitSafetyServiceV2:
 
         return {"allowed": True, "checks": checks}
 
-    async def safe_check(self, user_id: str) -> dict[str, Any]:
+    async def safe_check(self, user_id: str, exclude_order_id: str | None = None) -> dict[str, Any]:
         try:
-            return await self.check(user_id)
+            return await self.check(user_id, exclude_order_id=exclude_order_id)
         except LivePreSubmitSafetyError as exc:
             return {"allowed": False, "reason": str(exc)}
 
