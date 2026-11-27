@@ -15,12 +15,16 @@ os.environ.setdefault("RUN_MONGO_INDEX_BOOTSTRAP", "false")
 
 import httpx
 import pytest
+from fakes import FakeDB
 
 import api_routes_v3
 from app_factory import create_app
 from app_state import db
+from services.live_approval_challenge_service_v2 import LiveApprovalChallengeServiceV2
 from services.live_order_state_service_v2 import LiveOrderState, LiveOrderStateError, LiveOrderStateServiceV2
-from services.live_pre_submit_safety_service_v2 import LivePreSubmitSafetyServiceV2
+from services.live_pre_submit_safety_service_v2 import LivePreSubmitSafetyError, LivePreSubmitSafetyServiceV2
+from services.live_trading_gate_v2 import LiveTradingGateConfig, LiveTradingGateV2
+from services.live_trading_service_v2 import LiveTradingServiceV2
 
 
 async def cleanup(user_id: str):
@@ -208,3 +212,67 @@ async def test_only_ops_admins_create_global_halts_or_release_halts(monkeypatch)
         assert await db.live_halts.count_documents({"user_id": user_id, "active": True}) == 1
     finally:
         await cleanup_route_user(user_id, email)
+
+
+class SpyLiveAdapter:
+    def __init__(self):
+        self.calls = []
+
+    async def place_market_buy(self, symbol, notional_usd, client_order_id=None, dry_run=False):
+        self.calls.append((symbol, notional_usd, client_order_id, dry_run))
+        return {"success": True, "status": "submitted", "symbol": symbol, "side": "BUY", "client_order_id": client_order_id}
+
+
+SELF_USER = "pre-submit-self-user"
+
+
+def open_service(monkeypatch, fake_db, adapter):
+    monkeypatch.setenv("TRADING_MODE", "live-trading")
+    fake_db.bot_configs.docs.append({"user_id": SELF_USER, "live_trading_enabled": True})
+    fake_db.live_readonly_reports.docs.append({"user_id": SELF_USER, "checked_at": datetime.now(UTC).isoformat(), "status": "ok"})
+    gate = LiveTradingGateV2(LiveTradingGateConfig(live_trading_enabled=True, execution_adapter="coinbase_exchange_v2", signed_approval_required=True))
+    return LiveTradingServiceV2(fake_db, adapter=adapter, gate=gate)
+
+
+async def buy_with_challenge(fake_db, service):
+    challenge = await LiveApprovalChallengeServiceV2(fake_db).create_challenge(user_id=SELF_USER, side="BUY", symbol="BTC-USD", notional_usd=10.0)
+    return await service.place_market_buy(SELF_USER, "BTC-USD", 10.0, approval_token=challenge["approval_token"], dry_run=False)
+
+
+@pytest.mark.asyncio
+async def test_single_non_dry_run_order_with_fresh_reconciliation_reaches_the_adapter(monkeypatch):
+    fake_db = FakeDB()
+    adapter = SpyLiveAdapter()
+    service = open_service(monkeypatch, fake_db, adapter)
+
+    result = await buy_with_challenge(fake_db, service)
+
+    assert result["status"] == "submitted", result
+    assert len(adapter.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_older_submit_unknown_order_still_blocks_a_new_order(monkeypatch):
+    fake_db = FakeDB()
+    adapter = SpyLiveAdapter()
+    service = open_service(monkeypatch, fake_db, adapter)
+    states = LiveOrderStateServiceV2(fake_db)
+    older = await states.create_order(user_id=SELF_USER, symbol="BTC-USD", side="BUY", notional_usd=5)
+    for state in ["gate_checked", "risk_checked", "approved", "submit_unknown"]:
+        await states.transition(order_id=older["order_id"], next_state=state, reason="older stuck order")
+
+    result = await buy_with_challenge(fake_db, service)
+
+    assert result["status"] == "pre_submit_blocked", result
+    assert "unresolved live order" in result["pre_submit"]["reason"]
+    assert adapter.calls == []
+
+
+@pytest.mark.asyncio
+async def test_check_without_exclusion_blocks_any_unresolved_order():
+    fake_db = FakeDB()
+    await fake_db.live_readonly_reports.insert_one({"user_id": SELF_USER, "checked_at": datetime.now(UTC).isoformat(), "status": "ok"})
+    await LiveOrderStateServiceV2(fake_db).create_order(user_id=SELF_USER, symbol="BTC-USD", side="BUY", notional_usd=5)
+
+    with pytest.raises(LivePreSubmitSafetyError, match="unresolved live order"):
+        await LivePreSubmitSafetyServiceV2(fake_db).check(SELF_USER)
