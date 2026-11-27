@@ -7,6 +7,7 @@ from fastapi import Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials
 from jwt import ExpiredSignatureError, InvalidTokenError
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pymongo.errors import DuplicateKeyError
 
 from app_state import db, logger, pwd_context, security
 from runtime_config import JWT_SECRET
@@ -104,7 +105,12 @@ async def signup(user_data: UserCreate):
     user_dict = user.model_dump()
     user_dict["email"] = normalize_email(user_dict["email"])
     user_dict["created_at"] = user_dict["created_at"].isoformat()
-    await db.users.insert_one(user_dict)
+    try:
+        await db.users.insert_one(user_dict)
+    except DuplicateKeyError as exc:
+        # A concurrent signup with the same email won the uniq_users_email index.
+        await record_auth_failure(email)
+        raise HTTPException(status_code=400, detail="Email already registered") from exc
 
     config = {
         "user_id": user.id,

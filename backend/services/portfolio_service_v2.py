@@ -132,7 +132,8 @@ class PortfolioServiceV2:
             "timestamp": now,
         }
 
-        await self.db.risk_metrics.insert_one(snapshot.copy())
+        # created_at_ts is a BSON date for the risk_metrics_ttl index; the returned snapshot is unchanged.
+        await self.db.risk_metrics.insert_one({**snapshot, "created_at_ts": datetime.now(UTC)})
         await self.db.portfolio_state.update_one(
             {"user_id": user_id},
             {"$set": {"equity_high": max_equity, "daily_start_equity": daily_start_equity, "daily_start_date": today, "updated_at": now}},

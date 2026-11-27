@@ -1,3 +1,4 @@
+import os
 from typing import Any
 
 from pymongo.errors import OperationFailure
@@ -14,8 +15,20 @@ class MongoIndexServiceV2:
     an existing deployment still starts. Connection errors still raise.
     """
 
+    DEFAULT_RISK_METRICS_RETENTION_DAYS = 30
+
     def __init__(self, db):
         self.db = db
+
+    @classmethod
+    def risk_metrics_retention_seconds(cls) -> int:
+        try:
+            days = int(os.getenv("RISK_METRICS_RETENTION_DAYS", str(cls.DEFAULT_RISK_METRICS_RETENTION_DAYS)))
+        except ValueError:
+            days = cls.DEFAULT_RISK_METRICS_RETENTION_DAYS
+        if days <= 0:
+            days = cls.DEFAULT_RISK_METRICS_RETENTION_DAYS
+        return days * 86400
 
     async def ensure_indexes(self) -> dict[str, Any]:
         created: list[str] = []
@@ -39,6 +52,11 @@ class MongoIndexServiceV2:
                 return
             dropped.append(name)
 
+        await create(self.db.users, [("email", 1)], unique=True, name="uniq_users_email")
+        await create(self.db.users, [("id", 1)], unique=True, name="uniq_users_id")
+        await create(self.db.bot_configs, [("user_id", 1)], unique=True, name="uniq_bot_config_user")
+        await create(self.db.risk_metrics, [("user_id", 1), ("timestamp", -1)], name="risk_metrics_user_timestamp")
+        await create(self.db.risk_metrics, [("created_at_ts", 1)], expireAfterSeconds=self.risk_metrics_retention_seconds(), name="risk_metrics_ttl")
         await create(self.db.market_candles, [("symbol", 1), ("exchange", 1), ("timeframe", 1), ("open_time", 1)], unique=True, name="uniq_market_candle")
         await create(self.db.trades_v2, [("user_id", 1), ("created_at", -1)], name="trades_user_created")
         await create(self.db.trades_v2, [("client_order_id", 1)], sparse=True, name="trades_client_order_id")
