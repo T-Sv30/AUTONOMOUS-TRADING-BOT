@@ -1,6 +1,7 @@
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from fakes import FakeDB
 
 from services.market_data_service import MarketDataService, MarketDataUnavailable
 
@@ -9,55 +10,6 @@ NOON = datetime(2026, 11, 26, 12, 0, tzinfo=UTC)
 
 def sim(at):
     return MarketDataService(source="simulated", seed="s", clock=lambda: at)
-
-
-class FakeCursor:
-    def __init__(self, docs):
-        self.docs = docs
-
-    def sort(self, *args, **kwargs):
-        self.docs = sorted(self.docs, key=lambda doc: doc.get("open_time", ""), reverse=True)
-        return self
-
-    def limit(self, limit):
-        self.docs = self.docs[:limit]
-        return self
-
-    async def to_list(self, limit):
-        return self.docs[:limit]
-
-
-class FakeCollection:
-    def __init__(self):
-        self.docs = []
-
-    async def update_one(self, query, update, upsert=False):
-        for doc in self.docs:
-            if all(doc.get(k) == v for k, v in query.items()):
-                doc.update(update.get("$set", {}))
-                return
-        if upsert:
-            inserted = dict(query)
-            inserted.update(update.get("$set", {}))
-            self.docs.append(inserted)
-
-    async def find_one(self, query, projection=None, sort=None):
-        matches = [doc for doc in self.docs if all(doc.get(k) == v for k, v in query.items())]
-        matches.sort(key=lambda doc: doc.get("open_time", ""), reverse=True)
-        return dict(matches[0]) if matches else None
-
-    async def bulk_write(self, ops, ordered=True):
-        for op in ops:
-            await self.update_one(op._filter, op._doc, upsert=True)
-
-    def find(self, query, projection=None):
-        matches = [dict(doc) for doc in self.docs if all(doc.get(k) == v for k, v in query.items())]
-        return FakeCursor(matches)
-
-
-class FakeDB:
-    def __init__(self):
-        self.market_candles = FakeCollection()
 
 
 def test_timeframe_granularity_validation():

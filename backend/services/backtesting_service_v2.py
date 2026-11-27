@@ -4,6 +4,13 @@ from math import sqrt
 from statistics import mean, pstdev
 from typing import Any
 
+from services.market_data_service import MarketDataService
+
+
+def periods_per_year(timeframe: str) -> float:
+    """Candles per year for a timeframe, used to annualize Sharpe and Sortino."""
+    return 365 * 86400 / MarketDataService.granularity_for(timeframe)
+
 
 @dataclass
 class BacktestConfig:
@@ -18,6 +25,8 @@ class BacktestConfig:
     min_trade_notional: float = 10.0
     strategy_name: str = "moving_average_crossover"
     strategy_version: str = "phase2.v1"
+    # Candle timeframe of the run; Sharpe and Sortino annualize by it.
+    timeframe: str = "1h"
 
 
 class BacktestingServiceV2:
@@ -257,11 +266,11 @@ class BacktestingServiceV2:
         volatility = pstdev(returns) if len(returns) > 1 else 0.0
         downside = [r for r in returns if r < 0]
         downside_vol = pstdev(downside) if len(downside) > 1 else 0.0
-        periods_per_year = 365.0 * 24.0 * 60.0
-        sharpe = (avg_return / volatility * sqrt(periods_per_year)) if volatility else 0.0
-        sortino = (avg_return / downside_vol * sqrt(periods_per_year)) if downside_vol else 0.0
+        annual_periods = periods_per_year(config.timeframe)
+        sharpe = (avg_return / volatility * sqrt(annual_periods)) if volatility else 0.0
+        sortino = (avg_return / downside_vol * sqrt(annual_periods)) if downside_vol else 0.0
         roi = self._safe_div(final_equity - config.initial_cash, config.initial_cash)
-        benchmark = self.buy_and_hold_benchmark(normalized, config.initial_cash)
+        benchmark = self.buy_and_hold_benchmark(normalized, config.initial_cash, timeframe=config.timeframe)
 
         return {
             "status": "completed" if not halted else "halted",
@@ -292,7 +301,7 @@ class BacktestingServiceV2:
             "generated_at": self.utc_now(),
         }
 
-    def buy_and_hold_benchmark(self, candles: list[dict[str, Any]], initial_cash: float) -> dict[str, Any]:
+    def buy_and_hold_benchmark(self, candles: list[dict[str, Any]], initial_cash: float, timeframe: str = "1h") -> dict[str, Any]:
         prices = [self._price(c) for c in candles if self._price(c) > 0]
         if len(prices) < 2:
             return {"status": "insufficient_data", "roi_pct": 0.0, "final_equity": initial_cash}
@@ -303,7 +312,7 @@ class BacktestingServiceV2:
         returns = self._returns(equity_values)
         volatility = pstdev(returns) if len(returns) > 1 else 0.0
         avg_return = mean(returns) if returns else 0.0
-        sharpe = (avg_return / volatility * sqrt(365.0 * 24.0 * 60.0)) if volatility else 0.0
+        sharpe = (avg_return / volatility * sqrt(periods_per_year(timeframe))) if volatility else 0.0
         return {
             "status": "completed",
             "initial_price": round(prices[0], 8),

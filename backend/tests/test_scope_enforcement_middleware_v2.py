@@ -1,5 +1,6 @@
 import os
 import uuid
+from datetime import UTC, datetime
 
 os.environ.setdefault("DEBUG", "True")
 os.environ.setdefault("JWT_SECRET", "test-secret-for-scope-enforcement-tests-more-than-32-chars")
@@ -28,8 +29,23 @@ async def signup_user(client: httpx.AsyncClient, email: str):
 async def cleanup_user(user_id: str | None, email: str) -> None:
     await db.users.delete_many({"email": email})
     if user_id:
-        for collection_name in ["bot_configs", "auth_failures", "alerts"]:
+        for collection_name in [
+            "bot_configs",
+            "auth_failures",
+            "alerts",
+            "live_readonly_reports",
+            "live_order_transitions",
+            "live_order_audits",
+            "live_risk_decisions",
+            "live_approval_challenges",
+            "live_halts",
+        ]:
             await getattr(db, collection_name).delete_many({"user_id": user_id})
+
+
+async def seed_fresh_reconciliation(user_id: str) -> None:
+    # Pre-submit safety needs a fresh live-readonly reconciliation before any non-dry-run order.
+    await db.live_readonly_reports.insert_one({"user_id": user_id, "checked_at": datetime.now(UTC).isoformat(), "status": "ok"})
 
 
 @pytest.mark.asyncio
@@ -82,18 +98,20 @@ async def test_explicit_live_execute_scope_reaches_live_gate_for_non_dry_run_ord
         async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
             user_id, headers = await signup_user(client, email)
             await db.users.update_one({"id": user_id}, {"$set": {"scopes": [Scope.TRADING_LIVE_EXECUTE.value]}})
+            await seed_fresh_reconciliation(user_id)
             response = await client.post(
                 "/api/live-trading/market-buy",
                 headers=headers,
                 json={"symbol": "BTC-USD", "notional_usd": 5.0, "dry_run": False},
             )
 
-        # The scope check passes; the order is then stopped by the signed approval
-        # challenge (added after this test), which also answers 403.
+        # The scope check passes; the live trading service then rejects the order
+        # because it carries no signed approval challenge.
         body = response.json()
         assert "Missing required scope" not in str(body)
-        assert response.status_code == 403
-        assert "approval" in body["error"]["message"].lower()
+        assert response.status_code == 200, response.text
+        assert body["status"] == "approval_rejected"
+        assert "approval" in body["reason"].lower()
     finally:
         await cleanup_user(user_id, email)
 
@@ -129,5 +147,106 @@ async def test_explicit_ops_indexes_scope_allows_index_management():
 
         assert response.status_code == 200, response.text
         assert response.json()["status"] == "ok"
+    finally:
+        await cleanup_user(user_id, email)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "path,order",
+    [
+        ("/api/live-trading/market-buy", {"symbol": "BTC-USD", "notional_usd": 5.0}),
+        ("/api/live-trading/market-sell", {"symbol": "BTC-USD", "base_units": 0.0001, "reference_price": 50000.0}),
+    ],
+)
+@pytest.mark.parametrize("value", [0, "false", "no", "off", None])
+async def test_live_order_rejects_non_boolean_dry_run(path, order, value):
+    app = create_app()
+    email = f"scope-strict-dry-run-{uuid.uuid4().hex}@example.com"
+    user_id = None
+    try:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            user_id, headers = await signup_user(client, email)
+            await db.users.update_one({"id": user_id}, {"$set": {"scopes": [Scope.TRADING_LIVE_EXECUTE.value]}})
+            await seed_fresh_reconciliation(user_id)
+            response = await client.post(path, headers=headers, json={**order, "dry_run": value})
+
+        assert response.status_code == 422, f"dry_run={value!r} answered {response.status_code}: {response.text}"
+    finally:
+        await cleanup_user(user_id, email)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("value", [0, "false"])
+async def test_non_boolean_dry_run_needs_live_execute_scope(value):
+    app = create_app()
+    email = f"scope-strict-dry-run-scope-{uuid.uuid4().hex}@example.com"
+    user_id = None
+    try:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            user_id, headers = await signup_user(client, email)
+            response = await client.post(
+                "/api/live-trading/market-buy",
+                headers=headers,
+                json={"symbol": "BTC-USD", "notional_usd": 5.0, "dry_run": value},
+            )
+
+        assert response.status_code == 403, response.text
+        assert Scope.TRADING_LIVE_EXECUTE.value in response.json()["error"]["message"]
+    finally:
+        await cleanup_user(user_id, email)
+
+
+@pytest.mark.asyncio
+async def test_live_order_without_dry_run_key_is_a_dry_run_preview():
+    app = create_app()
+    email = f"scope-default-dry-run-{uuid.uuid4().hex}@example.com"
+    user_id = None
+    try:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            user_id, headers = await signup_user(client, email)
+            response = await client.post("/api/live-trading/market-buy", headers=headers, json={"symbol": "BTC-USD", "notional_usd": 5.0})
+
+        assert response.status_code == 200, response.text
+        assert response.json()["gate"]["dry_run"] is True
+    finally:
+        await cleanup_user(user_id, email)
+
+
+@pytest.mark.asyncio
+async def test_emergency_halt_release_requires_ops_halt_scope():
+    app = create_app()
+    email = f"scope-halt-release-{uuid.uuid4().hex}@example.com"
+    user_id = None
+    try:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            user_id, headers = await signup_user(client, email)
+            # A role with no scopes at all, so ops:halt is missing.
+            await db.users.update_one({"id": user_id}, {"$set": {"roles": ["no-scopes"], "scopes": []}})
+            response = await client.post("/api/ops/emergency-halt/release", headers=headers, json={"scope": "user"})
+
+        assert response.status_code == 403, response.text
+        assert Scope.OPS_HALT.value in response.json()["error"]["message"]
+    finally:
+        await cleanup_user(user_id, email)
+
+
+@pytest.mark.asyncio
+async def test_resolve_unknown_live_order_requires_live_execute_scope():
+    app = create_app()
+    email = f"scope-resolve-{uuid.uuid4().hex}@example.com"
+    user_id = None
+    try:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            user_id, headers = await signup_user(client, email)
+            response = await client.post("/api/live-trading/orders/live_order_missing/resolve", headers=headers)
+
+        assert response.status_code == 403, response.text
+        assert Scope.TRADING_LIVE_EXECUTE.value in response.json()["error"]["message"]
     finally:
         await cleanup_user(user_id, email)

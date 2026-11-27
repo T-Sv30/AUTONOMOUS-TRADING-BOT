@@ -1,87 +1,17 @@
 from datetime import UTC, datetime
 
 import pytest
+from fakes import FakeDB
 
 from auth_core import UserCreate, UserLogin
 from services.coinbase_live_execution_adapter_v2 import CoinbaseLiveExecutionAdapterV2, CoinbaseLiveExecutionError
 from services.execution_service_v2 import ExecutionServiceV2
+from services.live_approval_challenge_service_v2 import LiveApprovalChallengeServiceV2
 from services.live_order_audit_service_v2 import LiveOrderAuditServiceV2
 from services.live_trading_gate_v2 import LiveTradingGateConfig, LiveTradingGateV2
 from services.live_trading_service_v2 import LiveTradingServiceV2
 from services.trading_mode_v2 import TradingModeError, TradingModeService
 from services.trading_service_v2 import TradingServiceV2
-
-
-class FakeCursor:
-    def __init__(self, docs):
-        self.docs = docs
-
-    def sort(self, key, direction=1):
-        reverse = direction == -1
-        self.docs = sorted(self.docs, key=lambda doc: doc.get(key, ""), reverse=reverse)
-        return self
-
-    def limit(self, limit):
-        self.docs = self.docs[:limit]
-        return self
-
-    async def to_list(self, limit):
-        return self.docs[:limit]
-
-
-class FakeCollection:
-    def __init__(self):
-        self.docs = []
-
-    async def find_one(self, query, projection=None, sort=None):
-        matches = [doc for doc in self.docs if all(doc.get(k) == v for k, v in query.items())]
-        if sort:
-            for key, direction in reversed(sort):
-                matches = sorted(matches, key=lambda doc: doc.get(key, ""), reverse=direction == -1)
-        return dict(matches[0]) if matches else None
-
-    async def insert_one(self, doc):
-        self.docs.append(dict(doc))
-
-    async def update_many(self, query, update):
-        for doc in self.docs:
-            if all(doc.get(k) == v for k, v in query.items()):
-                doc.update(update.get("$set", {}))
-
-    async def update_one(self, query, update, upsert=False):
-        doc = None
-        for existing in self.docs:
-            if all(existing.get(k) == v for k, v in query.items()):
-                doc = existing
-                break
-        if doc is None:
-            if not upsert:
-                return
-            doc = dict(query)
-            self.docs.append(doc)
-        for key, value in update.get("$set", {}).items():
-            doc[key] = value
-        for key, value in update.get("$inc", {}).items():
-            doc[key] = doc.get(key, 0) + value
-
-    def find(self, query, projection=None):
-        matches = [dict(doc) for doc in self.docs if all(doc.get(k) == v for k, v in query.items())]
-        return FakeCursor(matches)
-
-
-class FakeDB:
-    def __init__(self):
-        self.bot_configs = FakeCollection()
-        self.live_order_audits = FakeCollection()
-        self.live_approval_challenges = FakeCollection()
-
-    def __getattr__(self, name):
-        # Services gained collections after this fake was written; create them on demand.
-        if name.startswith("_"):
-            raise AttributeError(name)
-        collection = FakeCollection()
-        setattr(self, name, collection)
-        return collection
 
 
 class FakeLiveAdapter:
@@ -247,14 +177,69 @@ def test_coinbase_live_adapter_kill_switch_blocks_non_dry_run(monkeypatch):
         CoinbaseLiveExecutionAdapterV2.assert_live_orders_not_killed()
 
 
+def refusing_session_factory(*args, **kwargs):
+    pytest.fail("the kill switch must stop a live POST before any HTTP session is created")
+
+
+def live_adapter_with_credentials(session_factory):
+    return CoinbaseLiveExecutionAdapterV2(api_key="key", api_secret="c2VjcmV0", passphrase="pass", session_factory=session_factory)
+
+
+@pytest.mark.asyncio
+async def test_kill_switch_unset_blocks_live_post(monkeypatch):
+    monkeypatch.delenv("COINBASE_LIVE_ORDER_KILL_SWITCH", raising=False)
+    adapter = live_adapter_with_credentials(refusing_session_factory)
+
+    with pytest.raises(CoinbaseLiveExecutionError, match="COINBASE_LIVE_ORDER_KILL_SWITCH"):
+        await adapter._post_private("/orders", {"type": "market", "side": "buy", "product_id": "BTC-USD", "funds": "5"})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("value", ["", "  ", "maybe", "disabled", "2"])
+async def test_kill_switch_empty_or_malformed_blocks_live_post(monkeypatch, value):
+    monkeypatch.setenv("COINBASE_LIVE_ORDER_KILL_SWITCH", value)
+    adapter = live_adapter_with_credentials(refusing_session_factory)
+
+    with pytest.raises(CoinbaseLiveExecutionError, match="COINBASE_LIVE_ORDER_KILL_SWITCH"):
+        await adapter._post_private("/orders", {"type": "market", "side": "buy", "product_id": "BTC-USD", "funds": "5"})
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        (None, True),
+        ("", True),
+        ("maybe", True),
+        ("true", True),
+        ("1", True),
+        ("0", False),
+        ("false", False),
+        ("No", False),
+        (" off ", False),
+    ],
+)
+def test_adapter_and_settings_parse_the_kill_switch_the_same_way(monkeypatch, value, expected):
+    from services.settings_v2 import SettingsV2
+
+    if value is None:
+        monkeypatch.delenv("COINBASE_LIVE_ORDER_KILL_SWITCH", raising=False)
+    else:
+        monkeypatch.setenv("COINBASE_LIVE_ORDER_KILL_SWITCH", value)
+
+    assert CoinbaseLiveExecutionAdapterV2.live_order_kill_switch_enabled() is expected
+    assert SettingsV2.from_env().coinbase_live_order_kill_switch is expected
+
+
 @pytest.mark.asyncio
 async def test_live_trading_service_blocks_before_adapter_when_gate_fails(monkeypatch):
     monkeypatch.setenv("TRADING_MODE", "live-trading")
     db = FakeDB()
     await db.bot_configs.insert_one({"user_id": "user-1", "live_trading_enabled": True})
     service = LiveTradingServiceV2(db, adapter=FakeLiveAdapter(), gate=LiveTradingGateV2(gate_config()))
+    # The service verifies a signed challenge before the gate, so the gate is what blocks here.
+    challenge = await LiveApprovalChallengeServiceV2(db).create_challenge(user_id="user-1", side="BUY", symbol="BTC-USD", notional_usd=10.0)
 
-    result = await service.place_market_buy("user-1", "BTC-USD", 10.0, approval_token="approve-me", dry_run=False)
+    result = await service.place_market_buy("user-1", "BTC-USD", 10.0, approval_token=challenge["approval_token"], dry_run=False)
 
     assert result["success"] is False
     assert result["status"] == "blocked"
@@ -305,11 +290,12 @@ async def test_live_trading_service_actual_order_requires_approval(monkeypatch):
     await db.bot_configs.insert_one({"user_id": "user-1", "live_trading_enabled": True})
     # Pre-submit safety (added after this test) needs a fresh live-readonly reconciliation.
     await db.live_readonly_reports.insert_one({"user_id": "user-1", "checked_at": datetime.now(UTC).isoformat(), "status": "ok"})
-    gate = LiveTradingGateV2(gate_config(live_trading_enabled=True, execution_adapter="coinbase_exchange_v2"))
+    gate = LiveTradingGateV2(gate_config(live_trading_enabled=True, execution_adapter="coinbase_exchange_v2", signed_approval_required=True))
     service = LiveTradingServiceV2(db, adapter=FakeLiveAdapter(), gate=gate)
+    challenge = await LiveApprovalChallengeServiceV2(db).create_challenge(user_id="user-1", side="BUY", symbol="BTC-USD", notional_usd=10.0)
 
     blocked = await service.place_market_buy("user-1", "BTC-USD", 10.0, approval_token="wrong", dry_run=False)
-    allowed = await service.place_market_buy("user-1", "BTC-USD", 10.0, approval_token="approve-me", dry_run=False)
+    allowed = await service.place_market_buy("user-1", "BTC-USD", 10.0, approval_token=challenge["approval_token"], dry_run=False)
 
     assert blocked["success"] is False
     assert allowed["success"] is True, allowed

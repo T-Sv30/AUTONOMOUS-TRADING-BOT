@@ -116,6 +116,7 @@ class LiveApprovalChallengeServiceV2:
             "status": "pending",
             "created_at": self.iso(now),
             "expires_at": self.iso(expires_at),
+            "expires_at_ts": expires_at,  # BSON date for the TTL index; readers keep using the ISO field
             "used_at": None,
             "version": self.VERSION,
         }

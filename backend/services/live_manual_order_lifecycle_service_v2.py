@@ -96,7 +96,7 @@ class LiveManualOrderLifecycleServiceV2:
     async def pre_submit_checked(self, *, user_id: str, live_order_id: str, dry_run: bool) -> dict[str, Any]:
         if dry_run:
             return {"allowed": True, "dry_run": True, "checks": []}
-        result = await self.pre_submit.safe_check(user_id)
+        result = await self.pre_submit.safe_check(user_id, exclude_order_id=live_order_id)
         if not result.get("allowed"):
             await self.states.transition(
                 order_id=live_order_id,
@@ -136,6 +136,18 @@ class LiveManualOrderLifecycleServiceV2:
         else:
             await self.states.transition(order_id=live_order_id, next_state=LiveOrderState.ACKNOWLEDGED.value, reason="broker acknowledged order", metadata={"order": order})
         return await self.reconciliation_required(user_id=user_id, live_order_id=live_order_id, order=order)
+
+    async def submit_unknown(self, live_order_id: str, error: str) -> dict[str, Any]:
+        return await self.states.transition(
+            order_id=live_order_id,
+            next_state=LiveOrderState.SUBMIT_UNKNOWN.value,
+            reason="live order outcome unknown after send; resolve by client order id, never retry blind",
+            metadata={"error": error},
+        )
+
+    async def rejected(self, live_order_id: str, error: str) -> dict[str, Any]:
+        await self.states.transition(order_id=live_order_id, next_state=LiveOrderState.SUBMITTED.value, reason="manual live order sent to exchange", metadata={"error": error})
+        return await self.states.transition(order_id=live_order_id, next_state=LiveOrderState.REJECTED.value, reason="broker rejected order", metadata={"error": error})
 
     async def adapter_error(self, live_order_id: str, error: str) -> dict[str, Any]:
         return await self.states.transition(order_id=live_order_id, next_state=LiveOrderState.FAILED.value, reason="adapter error during manual live order", metadata={"error": error})

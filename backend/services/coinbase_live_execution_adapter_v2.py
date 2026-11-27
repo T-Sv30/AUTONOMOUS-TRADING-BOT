@@ -1,12 +1,28 @@
 import json
+import math
 import os
 from typing import Any
 
+import aiohttp
+
 from services.coinbase_readonly_adapter_v2 import CoinbaseReadonlyAdapterV2, CoinbaseReadonlyError
+from services.settings_v2 import parse_kill_switch
+
+DEFAULT_LIVE_ORDER_TIMEOUT_SECONDS = 10.0
 
 
 class CoinbaseLiveExecutionError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, status: int | None = None):
+        super().__init__(message)
+        self.status = status
+
+
+class CoinbaseLiveOrderUnknownOutcome(CoinbaseLiveExecutionError):
+    """The order request was sent but its outcome is unknown.
+
+    It may or may not exist on the exchange. Never retry it blind: look it up
+    by client order id first.
+    """
 
 
 class CoinbaseLiveExecutionAdapterV2(CoinbaseReadonlyAdapterV2):
@@ -20,32 +36,66 @@ class CoinbaseLiveExecutionAdapterV2(CoinbaseReadonlyAdapterV2):
     adapter_name = "coinbase_exchange_v2"
     kill_switch_env = "COINBASE_LIVE_ORDER_KILL_SWITCH"
 
-    @staticmethod
-    def env_bool(name: str, default: bool = False) -> bool:
-        value = os.getenv(name)
-        if value is None:
-            return default
-        return value.strip().lower() in {"1", "true", "yes", "on"}
-
     @classmethod
     def live_order_kill_switch_enabled(cls) -> bool:
-        return cls.env_bool(cls.kill_switch_env, False)
+        # Same parsing as SettingsV2.coinbase_live_order_kill_switch: on unless explicitly false.
+        return parse_kill_switch(os.getenv(cls.kill_switch_env))
 
     @classmethod
     def assert_live_orders_not_killed(cls) -> None:
         if cls.live_order_kill_switch_enabled():
             raise CoinbaseLiveExecutionError(f"Live Coinbase order submission blocked by {cls.kill_switch_env}")
 
+    @staticmethod
+    def live_order_timeout_seconds() -> float:
+        try:
+            value = float(os.getenv("LIVE_ORDER_TIMEOUT_SECONDS", str(DEFAULT_LIVE_ORDER_TIMEOUT_SECONDS)))
+        except ValueError:
+            return DEFAULT_LIVE_ORDER_TIMEOUT_SECONDS
+        return value if math.isfinite(value) and value > 0 else DEFAULT_LIVE_ORDER_TIMEOUT_SECONDS
+
     async def _post_private(self, request_path: str, payload: dict[str, Any]) -> Any:
         self.assert_live_orders_not_killed()
         self.assert_credentials()
         body = json.dumps(payload, separators=(",", ":"))
-        async with self.session_factory() as session:
-            async with session.post(f"{self.base_url}{request_path}", headers=self._headers("POST", request_path, body), data=body) as response:
-                data = await response.json()
-                if response.status not in {200, 201}:
-                    raise CoinbaseLiveExecutionError(f"Coinbase live POST {request_path} returned HTTP {response.status}: {data}")
-                return data
+        headers = self._headers("POST", request_path, body)
+        timeout = aiohttp.ClientTimeout(total=self.live_order_timeout_seconds())
+        # From here the request may have reached the exchange, so any failure is an unknown outcome.
+        try:
+            async with self.session_factory(timeout=timeout) as session:
+                async with session.post(f"{self.base_url}{request_path}", headers=headers, data=body) as response:
+                    status = response.status
+                    try:
+                        data = await response.json()
+                    except Exception as exc:
+                        raise CoinbaseLiveOrderUnknownOutcome(
+                            f"Coinbase live POST {request_path} returned HTTP {status} with a body that is not JSON: {exc}",
+                            status=status,
+                        ) from exc
+        except CoinbaseLiveOrderUnknownOutcome:
+            raise
+        except Exception as exc:
+            raise CoinbaseLiveOrderUnknownOutcome(f"Coinbase live POST {request_path} outcome unknown: {type(exc).__name__}: {exc}") from exc
+        if 400 <= status < 500:
+            # A 4xx with a JSON body is a definite rejection: the exchange did not place the order.
+            raise CoinbaseLiveExecutionError(f"Coinbase live POST {request_path} returned HTTP {status}: {data}", status=status)
+        if status not in {200, 201} or not isinstance(data, dict):
+            raise CoinbaseLiveOrderUnknownOutcome(f"Coinbase live POST {request_path} returned HTTP {status}: {data}", status=status)
+        return data
+
+    async def get_order_by_client_oid(self, client_oid: str) -> dict[str, Any] | None:
+        """Read-only lookup by client order id. Returns None when the exchange has no such order."""
+        if not client_oid:
+            raise CoinbaseLiveExecutionError("client order id is required for an order lookup")
+        try:
+            data = await self._get_private(f"/orders/client:{client_oid}")
+        except CoinbaseReadonlyError as exc:
+            if exc.status == 404:
+                return None
+            raise CoinbaseLiveExecutionError(f"Coinbase order lookup for client_oid {client_oid} failed: {exc}", status=exc.status) from exc
+        if not isinstance(data, dict):
+            raise CoinbaseLiveExecutionError(f"Coinbase order lookup for client_oid {client_oid} returned a malformed body")
+        return data
 
     @staticmethod
     def market_buy_payload(symbol: str, notional_usd: float, client_order_id: str | None = None) -> dict[str, Any]:

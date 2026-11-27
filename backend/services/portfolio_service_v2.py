@@ -1,7 +1,11 @@
 from datetime import UTC, datetime
 from typing import Any
 
+from pymongo.errors import DuplicateKeyError
+
 from services.ledger_service_v2 import LedgerServiceV2
+
+FILLED_STATUSES = ("filled", "partially_filled")
 
 
 class PortfolioServiceV2:
@@ -13,20 +17,22 @@ class PortfolioServiceV2:
     def utc_now() -> str:
         return datetime.now(UTC).isoformat()
 
-    async def ensure_account_state(self, user_id: str, starting_cash: float = 10000.0) -> dict[str, Any]:
+    async def ensure_account_state(self, user_id: str, starting_cash: float = 10000.0, now: datetime | None = None) -> dict[str, Any]:
+        """Return the account state, opening it on ``now`` (the caller's clock; wall time by default) if missing."""
         state = await self.db.portfolio_state.find_one({"user_id": user_id}, {"_id": 0})
         if state:
             return state
 
-        now = self.utc_now()
+        opened_at = (now or datetime.now(UTC)).astimezone(UTC)
         state = {
             "user_id": user_id,
+            "starting_cash": float(starting_cash),
             "cash_balance": float(starting_cash),
             "realized_pnl": 0.0,
             "equity_high": float(starting_cash),
             "daily_start_equity": float(starting_cash),
-            "daily_start_date": datetime.now(UTC).date().isoformat(),
-            "updated_at": now,
+            "daily_start_date": opened_at.date().isoformat(),
+            "updated_at": opened_at.isoformat(),
         }
         await self.db.portfolio_state.insert_one(dict(state))  # copy: insert_one adds an ObjectId _id that breaks JSON responses
         return state
@@ -64,6 +70,39 @@ class PortfolioServiceV2:
             })
         return marked
 
+    async def claim_trade(
+        self,
+        user_id: str,
+        symbol: str,
+        side: str,
+        idempotency_key: str,
+        client_order_id: str | None,
+        context: dict[str, Any] | None = None,
+    ) -> bool:
+        """Claim one decision before its order is sent. False means another attempt already holds the claim.
+
+        The pending document holds the key in the uniq_trade_idempotency_claim partial index until
+        record_trade_attempt updates it: a fill keeps the claim, a rejection releases it.
+        """
+        claim = {
+            "user_id": user_id,
+            "symbol": symbol,
+            "side": side,
+            "order_type": "market",
+            "status": "pending",
+            "client_order_id": client_order_id,
+            "idempotency_key": idempotency_key,
+            "idempotency_claim": True,
+            "signal_snapshot": context or {},
+            "created_at": self.utc_now(),
+            "filled_at": None,
+        }
+        try:
+            await self.db.trades_v2.insert_one(claim)
+        except DuplicateKeyError:
+            return False
+        return True
+
     async def record_trade_attempt(
         self,
         user_id: str,
@@ -72,6 +111,7 @@ class PortfolioServiceV2:
         order: dict[str, Any],
         context: dict[str, Any] | None = None,
     ) -> None:
+        """Record the adapter's result on the pending claim for its key, or insert it when nothing was claimed."""
         now = self.utc_now()
         trade = {
             "user_id": user_id,
@@ -95,16 +135,22 @@ class PortfolioServiceV2:
             "created_at": now,
             "filled_at": now if order.get("status") in {"filled", "partially_filled"} else None,
         }
-        if trade["status"] != "rejected" and trade["idempotency_key"]:
-            # Claims the key in the uniq_trade_idempotency_claim partial index (partial indexes cannot filter on $ne).
-            trade["idempotency_claim"] = True
+        if trade["idempotency_key"]:
+            # Holds the key in the uniq_trade_idempotency_claim partial index (partial indexes cannot filter on $ne).
+            # A rejected attempt releases it, so a retry on the same candle can claim again.
+            trade["idempotency_claim"] = trade["status"] != "rejected"
+            claimed = {"user_id": user_id, "idempotency_key": trade["idempotency_key"], "status": "pending", "idempotency_claim": True}
+            update = {k: v for k, v in trade.items() if k != "created_at"}
+            result = await self.db.trades_v2.update_one(claimed, {"$set": update})
+            if result.matched_count:
+                return
         await self.db.trades_v2.insert_one(trade)
 
     async def get_trades(self, user_id: str, limit: int = 100) -> list[dict[str, Any]]:
         return await self.db.trades_v2.find({"user_id": user_id}, {"_id": 0}).sort("created_at", -1).limit(limit).to_list(limit)
 
     async def update_risk_snapshot(self, user_id: str, price_map: dict[str, float] | None = None, now: datetime | None = None, max_drawdown_pct: float = 0.05) -> dict[str, Any]:
-        state = await self.ensure_account_state(user_id)
+        state = await self.ensure_account_state(user_id, now=now)
         positions = await self.mark_positions(user_id, price_map)
 
         cash_balance = float(state.get("cash_balance", 0.0))
@@ -132,7 +178,8 @@ class PortfolioServiceV2:
             "timestamp": now,
         }
 
-        await self.db.risk_metrics.insert_one(snapshot.copy())
+        # created_at_ts is a BSON date for the risk_metrics_ttl index; the returned snapshot is unchanged.
+        await self.db.risk_metrics.insert_one({**snapshot, "created_at_ts": datetime.now(UTC)})
         await self.db.portfolio_state.update_one(
             {"user_id": user_id},
             {"$set": {"equity_high": max_equity, "daily_start_equity": daily_start_equity, "daily_start_date": today, "updated_at": now}},
@@ -147,7 +194,7 @@ class PortfolioServiceV2:
             metrics = await self.update_risk_snapshot(user_id)
 
         positions = await self.get_positions(user_id)
-        trades_count = await self.db.trades_v2.count_documents({"user_id": user_id})
+        trades_count = await self.db.trades_v2.count_documents({"user_id": user_id, "status": {"$in": list(FILLED_STATUSES)}})
         config = await self.db.bot_configs.find_one({"user_id": user_id}, {"_id": 0})
         return {
             "total_equity": metrics.get("total_equity", 10000.0),

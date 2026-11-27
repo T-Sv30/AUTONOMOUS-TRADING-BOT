@@ -32,7 +32,6 @@ from app_state import db
 from services.bot_engine import BotEngine
 from services.ledger_service_v2 import LedgerServiceV2
 from services.mongo_indexes_v2 import MongoIndexServiceV2
-from services.portfolio_service_v2 import PortfolioServiceV2
 
 START = datetime(2026, 11, 26, 22, 0, tzinfo=UTC)
 END = datetime(2026, 11, 27, 2, 0, tzinfo=UTC)
@@ -146,9 +145,7 @@ async def soak(request):
     await MongoIndexServiceV2(db).ensure_indexes()
     user_id = f"paper-soak-{uuid.uuid4().hex}"
     try:
-        await PortfolioServiceV2(db).ensure_account_state(user_id)
-        # The account opens on the scripted day, so the run starts from a known daily_start_date whatever the real date is.
-        await db.portfolio_state.update_one({"user_id": user_id}, {"$set": {"daily_start_date": START.date().isoformat()}})
+        # No manual account seeding: the engine opens the account on its own (scripted) clock.
         await db.bot_configs.insert_one({
             "user_id": user_id,
             "is_active": True,
@@ -159,6 +156,16 @@ async def soak(request):
 
         market = ScriptedMarket(START)
         engine = BotEngine(db, market=market)
+        opened = []
+        real_ensure = engine.portfolio.ensure_account_state
+
+        async def ensure_and_record(uid, *args, **kwargs):
+            state = await real_ensure(uid, *args, **kwargs)
+            if not opened:
+                opened.append(dict(state))  # the first call opens the account
+            return state
+
+        engine.portfolio.ensure_account_state = ensure_and_record
         midnight = START.replace(hour=0) + timedelta(days=1)
         first_snapshot_after_midnight = None
         while market.now <= END:
@@ -179,7 +186,7 @@ async def soak(request):
                 f"paper soak first snapshot after midnight {first_snapshot_after_midnight}, "
                 f"is_active {config.get('is_active')}, halt_reason {config.get('halt_reason')!r}"
             )
-        yield {"user_id": user_id, "trades": trades, "first_snapshot_after_midnight": first_snapshot_after_midnight}
+        yield {"user_id": user_id, "trades": trades, "first_snapshot_after_midnight": first_snapshot_after_midnight, "opened": opened[0] if opened else None}
     finally:
         await cleanup_user(user_id)
 
@@ -211,3 +218,12 @@ async def test_bot_does_not_halt_across_midnight(soak):
     # P0-4: with the baseline rolled, the two days' losses are judged separately and the bot did not halt
     assert (await db.bot_configs.find_one({"user_id": user_id}))["is_active"] is True
     assert (await LedgerServiceV2(db).reconcile(user_id, starting_cash=10000.0))["status"] == "ok"
+
+
+async def test_account_opens_on_the_scripted_day(soak):
+    # M1.5b task 16: with no manual seeding, the new account's daily start comes from the engine clock.
+    assert soak["opened"] is not None
+    assert soak["opened"]["daily_start_date"] == START.date().isoformat()
+    assert soak["opened"].get("starting_cash") == 10000.0
+    # M1.5b task 15: every claim was resolved; no pending trade is left behind.
+    assert [t for t in soak["trades"] if t["status"] == "pending"] == []

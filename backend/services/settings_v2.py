@@ -6,9 +6,23 @@ from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from services.env_numbers_v2 import env_number
 from services.market_data_service import resolve_market_data_source
 
 logger = logging.getLogger(__name__)
+
+
+KILL_SWITCH_OFF_VALUES = frozenset({"0", "false", "no", "off"})
+
+
+def parse_kill_switch(value: str | None) -> bool:
+    """Fail closed: the live order kill switch is on unless explicitly set false.
+
+    Unset, empty and malformed values all mean on. Only 0/false/no/off turn it off.
+    """
+    if value is None:
+        return True
+    return value.strip().lower() not in KILL_SWITCH_OFF_VALUES
 
 
 class RuntimeRole(str, Enum):
@@ -41,6 +55,8 @@ class SettingsV2(BaseModel):
     api_embed_bot_manager: bool = False
 
     jwt_secret: str = ""
+    # Access token lifetime. Short by default; revocation is per user through token_version.
+    jwt_expire_hours: int = Field(default=12, ge=1, le=168)
     cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:3000"])
     mongo_url: str = "mongodb://localhost:27017"
     db_name: str = "trading_bot"
@@ -60,6 +76,14 @@ class SettingsV2(BaseModel):
     live_manual_approval_required: bool = True
     live_approval_token: str = ""
     coinbase_live_order_kill_switch: bool = True
+
+    # Bounded numeric settings; from_env reads them through env_number, which names the variable on a bad value.
+    market_data_timeout_seconds: float = Field(default=10.0, ge=1, le=120)
+    sim_spread_bps: float = Field(default=2.0, ge=0, le=100)
+    paper_extra_slippage_bps: float = Field(default=0.0, ge=0, le=100)
+    paper_fallback_spread_bps: float = Field(default=2.0, ge=0, le=100)
+    live_order_timeout_seconds: float = Field(default=10.0, ge=1, le=60)
+    risk_metrics_retention_days: int = Field(default=30, ge=1, le=3650)
 
     @staticmethod
     def env_bool(name: str, default: bool = False) -> bool:
@@ -85,6 +109,7 @@ class SettingsV2(BaseModel):
             run_mongo_index_bootstrap=cls.env_bool("RUN_MONGO_INDEX_BOOTSTRAP", debug),
             api_embed_bot_manager=cls.env_bool("API_EMBED_BOT_MANAGER", debug or runtime_role == RuntimeRole.ALL),
             jwt_secret=os.getenv("JWT_SECRET") or ("local-debug-placeholder" if debug else ""),
+            jwt_expire_hours=env_number("JWT_EXPIRE_HOURS"),
             cors_origins=cls.parse_csv(os.getenv("CORS_ORIGINS", "http://localhost:3000")),
             mongo_url=os.getenv("MONGO_URL", "mongodb://localhost:27017"),
             db_name=os.getenv("DB_NAME", "trading_bot"),
@@ -100,7 +125,13 @@ class SettingsV2(BaseModel):
             live_max_order_notional_usd=float(os.getenv("LIVE_MAX_ORDER_NOTIONAL_USD", "25") or 25),
             live_manual_approval_required=cls.env_bool("LIVE_MANUAL_APPROVAL_REQUIRED", True),
             live_approval_token=os.getenv("LIVE_APPROVAL_TOKEN", ""),
-            coinbase_live_order_kill_switch=cls.env_bool("COINBASE_LIVE_ORDER_KILL_SWITCH", True),
+            coinbase_live_order_kill_switch=parse_kill_switch(os.getenv("COINBASE_LIVE_ORDER_KILL_SWITCH")),
+            market_data_timeout_seconds=env_number("MARKET_DATA_TIMEOUT_SECONDS"),
+            sim_spread_bps=env_number("SIM_SPREAD_BPS"),
+            paper_extra_slippage_bps=env_number("PAPER_EXTRA_SLIPPAGE_BPS"),
+            paper_fallback_spread_bps=env_number("PAPER_FALLBACK_SPREAD_BPS"),
+            live_order_timeout_seconds=env_number("LIVE_ORDER_TIMEOUT_SECONDS"),
+            risk_metrics_retention_days=env_number("RISK_METRICS_RETENTION_DAYS"),
         )
 
     @field_validator("cors_origins")

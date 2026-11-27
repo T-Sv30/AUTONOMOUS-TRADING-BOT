@@ -5,7 +5,7 @@ os.environ.setdefault("JWT_SECRET", "test-secret-for-route-model-import")
 
 import pytest
 
-from api_routes_v2 import BotConfig
+from api_routes_v2 import BotConfigUpdate
 from services.ledger_service_v2 import LedgerServiceV2
 from services.portfolio_service_v2 import PortfolioServiceV2
 
@@ -218,8 +218,7 @@ async def test_portfolio_records_ledger_entries_for_buy_and_sell_fills():
 
 
 def test_bot_config_update_payload_does_not_require_client_user_id():
-    config = BotConfig(is_active=True, symbols=["BTC-USD"])
+    # The route sets user_id from the token; client user_id and is_active keys are ignored (M1.5b task 12).
+    config = BotConfigUpdate(user_id="someone-else", is_active=True, symbols=["BTC-USD"])
 
-    assert config.user_id == ""
-    assert config.is_active is True
-    assert config.symbols == ["BTC-USD"]
+    assert config.model_dump(exclude_unset=True) == {"symbols": ["BTC-USD"]}

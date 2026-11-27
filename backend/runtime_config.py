@@ -56,4 +56,5 @@ API_EMBED_BOT_MANAGER = SETTINGS.api_embed_bot_manager
 OPS_ADMIN_ENABLED = SETTINGS.ops_admin_enabled
 OPS_ADMIN_EMAILS = SETTINGS.ops_admin_emails
 JWT_SECRET = SETTINGS.jwt_secret
+JWT_EXPIRE_HOURS = SETTINGS.jwt_expire_hours
 CORS_ORIGINS = SETTINGS.cors_origins

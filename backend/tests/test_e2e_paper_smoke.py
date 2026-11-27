@@ -1,3 +1,4 @@
+import asyncio
 import os
 import uuid
 
@@ -17,6 +18,7 @@ import httpx
 import pytest
 from pymongo.errors import DuplicateKeyError
 
+import auth_core
 from app_factory import create_app
 from app_state import db
 from services.bot_engine import BotEngine
@@ -178,3 +180,72 @@ async def test_e2e_mongo_rejects_second_non_rejected_trade_with_same_idempotency
         assert await db.trades_v2.count_documents({"user_id": user_id}) == 1
     finally:
         await cleanup_user(user_id=user_id)
+
+
+@pytest.mark.asyncio
+async def test_e2e_mongo_claim_blocks_a_second_claim_until_the_first_is_rejected():
+    """M1.5b task 15: on the real partial index, a pending claim blocks a second claim; a rejection frees the key."""
+    await MongoIndexServiceV2(db).ensure_indexes()
+    user_id = f"paper-smoke-claim-{uuid.uuid4().hex}"
+    portfolio = PortfolioServiceV2(db)
+    key = f"{user_id}:BTC-USD:BUY:e2e_paper_smoke:1m:2026-11-26T12:00:00+00:00"
+
+    try:
+        assert await portfolio.claim_trade(user_id, "BTC-USD", "BUY", key, "claim-1", {}) is True
+        assert await portfolio.claim_trade(user_id, "BTC-USD", "BUY", key, "claim-1", {}) is False
+        await portfolio.record_trade_attempt(user_id, "BTC-USD", "BUY", {"status": "rejected", "client_order_id": "claim-1", "idempotency_key": key})
+        assert await portfolio.claim_trade(user_id, "BTC-USD", "BUY", key, "claim-1", {}) is True
+        await portfolio.record_trade_attempt(user_id, "BTC-USD", "BUY", {"status": "filled", "client_order_id": "claim-1", "idempotency_key": key, "simulation": True})
+        trades = await db.trades_v2.find({"user_id": user_id}, {"_id": 0}).sort("_id", 1).to_list(10)
+        assert [(t["status"], t["idempotency_claim"]) for t in trades] == [("rejected", False), ("filled", True)]
+    finally:
+        await cleanup_user(user_id=user_id)
+
+
+class SlowExistenceCheckUsers:
+    """Real users collection whose find_one pauses, so two signups both pass the existence check."""
+
+    def __init__(self, users):
+        self._users = users
+
+    async def find_one(self, *args, **kwargs):
+        found = await self._users.find_one(*args, **kwargs)
+        await asyncio.sleep(0.2)
+        return found
+
+    def __getattr__(self, name):
+        return getattr(self._users, name)
+
+
+class SlowExistenceCheckDB:
+    def __init__(self, real_db):
+        self._db = real_db
+        self.users = SlowExistenceCheckUsers(real_db.users)
+
+    def __getattr__(self, name):
+        return getattr(self._db, name)
+
+
+@pytest.mark.asyncio
+async def test_e2e_concurrent_signups_with_one_email_leave_one_user(monkeypatch):
+    """M1.5b task 8 (P0-11): the unique users.email index is the backstop behind the existence check."""
+    await MongoIndexServiceV2(db).ensure_indexes()
+    email = f"signup-race-{uuid.uuid4().hex}@example.com"
+    monkeypatch.setattr(auth_core, "db", SlowExistenceCheckDB(db))
+    user_ids = []
+
+    try:
+        transport = httpx.ASGITransport(app=create_app())
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            payload = {"email": email, "password": "SignupRacePassword123!"}
+            responses = await asyncio.gather(
+                client.post("/api/auth/signup", json=payload),
+                client.post("/api/auth/signup", json=payload),
+            )
+        user_ids = [user["id"] for user in await db.users.find({"email": email}, {"_id": 0, "id": 1}).to_list(10)]
+        assert len(user_ids) == 1
+        assert sorted(response.status_code for response in responses) == [200, 400], [response.text for response in responses]
+    finally:
+        for user_id in user_ids:
+            await cleanup_user(user_id=user_id)
+        await cleanup_user(email=email)

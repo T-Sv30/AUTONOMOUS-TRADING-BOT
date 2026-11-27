@@ -4,6 +4,9 @@ from services.strategy_service_v2 import StrategyServiceV2
 
 
 class StrategyEnsembleV2:
+    # The strategies generate_all runs; shadow mode allowlists exactly these.
+    STRATEGY_NAMES = frozenset({"trend_following", "mean_reversion", "breakout"})
+
     def __init__(self):
         self.base = StrategyServiceV2()
 

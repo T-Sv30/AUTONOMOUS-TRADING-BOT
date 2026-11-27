@@ -1,40 +1,73 @@
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, ConfigDict, Field
+from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app_state import db, logger
-from auth_core import TokenResponse, UserCreate, UserLogin, get_current_user, login, signup
+from auth_core import TokenResponse, UserCreate, UserLogin, get_current_user, login, logout_all, signup
 from services.advanced_risk_manager import AdvancedRiskManager
 from services.market_data_service import MarketDataService
-from services.portfolio_service_v2 import PortfolioServiceV2
+from services.paper_execution_adapter_v2 import PaperExecutionAdapterV2
+from services.portfolio_service_v2 import FILLED_STATUSES, PortfolioServiceV2
 
 api_router = APIRouter(prefix="/api")
 
+LEGACY_STARTING_CASH = 10000.0
 
-class BotConfig(BaseModel):
+
+class BotConfigUpdate(BaseModel):
+    """Fields a user may change through POST /bot-config; only the fields sent are stored.
+
+    There is no is_active field: only /bot/start and /bot/stop start or stop a bot
+    (an is_active key in the body is ignored like any other unknown key).
+    """
+
     model_config = ConfigDict(extra="ignore")
-    user_id: str = ""
-    is_active: bool = False
-    capital_floor: float | None = None  # deprecated and ignored; drawdown is the only equity halt
-    max_daily_loss: float = 0.015
-    risk_target_vol: float = 0.10
-    symbols: list[str] = Field(default_factory=lambda: ["BTC-USD", "ETH-USD"])
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    capital_floor: float | None = None  # deprecated: accepted so old clients do not get 422, never stored
+    symbols: list[str] | None = None
+    max_daily_loss: float | None = Field(default=None, gt=0, le=0.10)
+    max_drawdown_pct: float | None = Field(default=None, gt=0, le=0.25)
+    max_position_notional: float | None = Field(default=None, ge=5, le=10000)
+    cooldown_seconds: int | None = Field(default=None, ge=0, le=86400)
+    risk_target_vol: float | None = None
+
+    @field_validator("symbols")
+    @classmethod
+    def validate_symbols(cls, symbols: list[str] | None) -> list[str] | None:
+        if symbols is None:
+            return symbols
+        if not symbols:
+            raise ValueError("symbols must not be empty")
+        if len(set(symbols)) != len(symbols):
+            raise ValueError("symbols must not repeat")
+        unsupported = sorted(set(symbols) - PaperExecutionAdapterV2.SUPPORTED_SYMBOLS)
+        if unsupported:
+            raise ValueError(f"unsupported symbols: {', '.join(unsupported)}")
+        return symbols
 
 
 def portfolio() -> PortfolioServiceV2:
     return PortfolioServiceV2(db)
 
 
+def client_ip(request: Request) -> str:
+    # The socket peer only. X-Forwarded-For is not trusted until the proxy work in a later milestone.
+    return request.client.host if request.client else "unknown"
+
+
 @api_router.post("/auth/signup", response_model=TokenResponse)
-async def signup_route(user_data: UserCreate):
-    return await signup(user_data)
+async def signup_route(user_data: UserCreate, request: Request):
+    return await signup(user_data, client_ip(request))
 
 
 @api_router.post("/auth/login", response_model=TokenResponse)
-async def login_route(credentials: UserLogin):
-    return await login(credentials)
+async def login_route(credentials: UserLogin, request: Request):
+    return await login(credentials, client_ip(request))
+
+
+@api_router.post("/auth/logout-all")
+async def logout_all_route(current_user: dict = Depends(get_current_user)):
+    return await logout_all(current_user)
 
 
 @api_router.get("/trades")
@@ -62,12 +95,15 @@ async def get_bot_config(current_user: dict = Depends(get_current_user)):
 
 
 @api_router.post("/bot-config")
-async def update_bot_config(config_update: BotConfig, current_user: dict = Depends(get_current_user)):
-    config_dict = config_update.model_dump()
-    config_dict["user_id"] = current_user["id"]
-    config_dict["updated_at"] = datetime.now(UTC).isoformat()
-    await db.bot_configs.update_one({"user_id": current_user["id"]}, {"$set": config_dict}, upsert=True)
-    return {"status": "success", "config": config_dict}
+async def update_bot_config(config_update: BotConfigUpdate, current_user: dict = Depends(get_current_user)):
+    changes = config_update.model_dump(exclude_unset=True, exclude_none=True, exclude={"capital_floor"})
+    changes["updated_at"] = datetime.now(UTC).isoformat()
+    await db.bot_configs.update_one(
+        {"user_id": current_user["id"]},
+        {"$set": changes, "$setOnInsert": {"is_active": False}},
+        upsert=True,
+    )
+    return {"status": "success", "config": await db.bot_configs.find_one({"user_id": current_user["id"]}, {"_id": 0})}
 
 
 @api_router.get("/market-analysis")
@@ -136,26 +172,30 @@ async def get_advanced_risk_assessment(current_user: dict = Depends(get_current_
 
 @api_router.get("/performance/metrics")
 async def get_performance_metrics(current_user: dict = Depends(get_current_user)):
-    trades = await portfolio().get_trades(current_user["id"], limit=1000)
-    total_trades = len(trades)
-    winning = [t for t in trades if t.get("realized_pnl", t.get("pnl", 0)) > 0]
-    losing = [t for t in trades if t.get("realized_pnl", t.get("pnl", 0)) < 0]
-    win_rate = (len(winning) / total_trades * 100) if total_trades else 0
-    avg_profit = sum(t.get("realized_pnl", t.get("pnl", 0)) for t in winning) / len(winning) if winning else 0
-    avg_loss = sum(t.get("realized_pnl", t.get("pnl", 0)) for t in losing) / len(losing) if losing else 0
-    total_profit = sum(t.get("realized_pnl", t.get("pnl", 0)) for t in winning)
-    total_loss = sum(t.get("realized_pnl", t.get("pnl", 0)) for t in losing)
-    metrics = await db.risk_metrics.find_one({"user_id": current_user["id"]}, {"_id": 0}, sort=[("timestamp", -1)])
+    """Round-trip metrics over filled trades; pending claims and rejected attempts are not trades."""
+    user_id = current_user["id"]
+    filled = await db.trades_v2.find({"user_id": user_id, "status": {"$in": list(FILLED_STATUSES)}}, {"_id": 0}).to_list(None)
+    # A round trip closes on a SELL; its realized_pnl decides the win.
+    closed = [t for t in filled if t.get("side") == "SELL"]
+    pnls = [float(t.get("realized_pnl") or 0.0) for t in closed]
+    winning = [pnl for pnl in pnls if pnl > 0]
+    losing = [pnl for pnl in pnls if pnl < 0]
+    win_rate = (len(winning) / len(closed) * 100) if closed else 0
+    total_profit = sum(winning)
+    total_loss = sum(losing)
+    metrics = await db.risk_metrics.find_one({"user_id": user_id}, {"_id": 0}, sort=[("timestamp", -1)])
     if not metrics:
-        metrics = await portfolio().update_risk_snapshot(current_user["id"])
-    roi = ((metrics.get("total_equity", 10000.0) - 10000.0) / 10000.0 * 100)
+        metrics = await portfolio().update_risk_snapshot(user_id)
+    state = await db.portfolio_state.find_one({"user_id": user_id}, {"_id": 0}) or {}
+    starting_cash = float(state.get("starting_cash") or LEGACY_STARTING_CASH)  # accounts opened before starting_cash was stored
+    roi = (float(metrics.get("total_equity", starting_cash)) - starting_cash) / starting_cash * 100
     return {
-        "total_trades": total_trades,
+        "total_trades": len(filled),
         "winning_trades": len(winning),
         "losing_trades": len(losing),
         "win_rate": round(win_rate, 2),
-        "avg_profit": round(avg_profit, 2),
-        "avg_loss": round(avg_loss, 2),
+        "avg_profit": round(total_profit / len(winning), 2) if winning else 0,
+        "avg_loss": round(total_loss / len(losing), 2) if losing else 0,
         "total_profit": round(total_profit, 2),
         "total_loss": round(total_loss, 2),
         "net_pnl": round(total_profit + total_loss, 2),

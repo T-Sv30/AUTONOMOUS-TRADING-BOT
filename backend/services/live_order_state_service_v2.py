@@ -18,6 +18,8 @@ class LiveOrderState(str, Enum):
     APPROVAL_REQUIRED = "approval_required"
     APPROVED = "approved"
     SUBMITTED = "submitted"
+    # The order was sent but the exchange's answer was lost. Resolve by client order id lookup; never retry blind.
+    SUBMIT_UNKNOWN = "submit_unknown"
     ACKNOWLEDGED = "acknowledged"
     PARTIALLY_FILLED = "partially_filled"
     FILLED = "filled"
@@ -44,8 +46,9 @@ ALLOWED_TRANSITIONS = {
     LiveOrderState.GATE_CHECKED.value: {LiveOrderState.RISK_CHECKED.value, LiveOrderState.FAILED.value, LiveOrderState.HALTED.value},
     LiveOrderState.RISK_CHECKED.value: {LiveOrderState.APPROVAL_REQUIRED.value, LiveOrderState.APPROVED.value, LiveOrderState.FAILED.value, LiveOrderState.HALTED.value},
     LiveOrderState.APPROVAL_REQUIRED.value: {LiveOrderState.APPROVED.value, LiveOrderState.FAILED.value, LiveOrderState.HALTED.value},
-    LiveOrderState.APPROVED.value: {LiveOrderState.SUBMITTED.value, LiveOrderState.FAILED.value, LiveOrderState.HALTED.value},
-    LiveOrderState.SUBMITTED.value: {LiveOrderState.ACKNOWLEDGED.value, LiveOrderState.REJECTED.value, LiveOrderState.FAILED.value, LiveOrderState.HALTED.value},
+    LiveOrderState.APPROVED.value: {LiveOrderState.SUBMITTED.value, LiveOrderState.SUBMIT_UNKNOWN.value, LiveOrderState.FAILED.value, LiveOrderState.HALTED.value},
+    LiveOrderState.SUBMITTED.value: {LiveOrderState.ACKNOWLEDGED.value, LiveOrderState.SUBMIT_UNKNOWN.value, LiveOrderState.REJECTED.value, LiveOrderState.FAILED.value, LiveOrderState.HALTED.value},
+    LiveOrderState.SUBMIT_UNKNOWN.value: {LiveOrderState.ACKNOWLEDGED.value, LiveOrderState.FILLED.value, LiveOrderState.REJECTED.value, LiveOrderState.FAILED.value},
     LiveOrderState.ACKNOWLEDGED.value: {LiveOrderState.PARTIALLY_FILLED.value, LiveOrderState.FILLED.value, LiveOrderState.REJECTED.value, LiveOrderState.CANCELED.value, LiveOrderState.FAILED.value, LiveOrderState.HALTED.value},
     LiveOrderState.PARTIALLY_FILLED.value: {LiveOrderState.FILLED.value, LiveOrderState.CANCELED.value, LiveOrderState.RECONCILIATION_PENDING.value, LiveOrderState.FAILED.value, LiveOrderState.HALTED.value},
     LiveOrderState.FILLED.value: {LiveOrderState.RECONCILIATION_PENDING.value, LiveOrderState.FAILED.value, LiveOrderState.HALTED.value},
@@ -90,12 +93,13 @@ class LiveOrderStateServiceV2:
     async def latest_transition(self, order_id: str) -> dict[str, Any] | None:
         return await self.db.live_order_transitions.find_one({"order_id": order_id}, {"_id": 0}, sort=[("sequence", -1)])
 
-    async def latest_unresolved_for_user(self, user_id: str) -> dict[str, Any] | None:
-        return await self.db.live_order_transitions.find_one(
-            {"user_id": user_id, "is_latest": True, "state": {"$in": sorted(UNRESOLVED_STATES)}},
-            {"_id": 0},
-            sort=[("created_at", -1)],
-        )
+    async def latest_unresolved_for_user(self, user_id: str, exclude_order_id: str | None = None) -> dict[str, Any] | None:
+        query: dict[str, Any] = {"user_id": user_id, "is_latest": True, "state": {"$in": sorted(UNRESOLVED_STATES)}}
+        if exclude_order_id:
+            # Exclude in the query, not after fetching: the order being checked is always the newest,
+            # so skipping the latest result would hide an older unresolved order behind it.
+            query["order_id"] = {"$ne": exclude_order_id}
+        return await self.db.live_order_transitions.find_one(query, {"_id": 0}, sort=[("created_at", -1)])
 
     async def has_unresolved_for_user(self, user_id: str) -> bool:
         return bool(await self.latest_unresolved_for_user(user_id))

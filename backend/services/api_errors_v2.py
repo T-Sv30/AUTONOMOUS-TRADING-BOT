@@ -65,13 +65,18 @@ async def http_exception_handler(request: Request, exc: HTTPException) -> JSONRe
     return JSONResponse(status_code=exc.status_code, content=payload, headers=headers)
 
 
+def json_safe_validation_errors(errors) -> list[dict[str, Any]]:
+    # A field_validator's ValueError lands in ctx["error"] as the exception object, which JSON cannot encode.
+    return [{**error, "ctx": {key: str(value) for key, value in error["ctx"].items()}} if "ctx" in error else dict(error) for error in errors]
+
+
 async def validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
     request_id = request_id_from(request)
     payload = error_envelope(
         code="VALIDATION_ERROR",
         message="Request validation failed",
         request_id=request_id,
-        details={"errors": exc.errors()},
+        details={"errors": json_safe_validation_errors(exc.errors())},
     )
     log_event(
         logger,

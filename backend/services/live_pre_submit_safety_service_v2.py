@@ -56,7 +56,7 @@ class LivePreSubmitSafetyServiceV2:
         except ValueError:
             return None
 
-    async def check(self, user_id: str) -> dict[str, Any]:
+    async def check(self, user_id: str, exclude_order_id: str | None = None) -> dict[str, Any]:
         checks = []
 
         async def add(name: str, passed: bool, reason: str, metadata: dict[str, Any] | None = None):
@@ -67,7 +67,7 @@ class LivePreSubmitSafetyServiceV2:
         halt = await self.halt_record(user_id)
         await add("no_active_halt", not bool(halt), "active live trading halt blocks order submission", {"halt": halt or {}})
 
-        unresolved = await self.orders.latest_unresolved_for_user(user_id)
+        unresolved = await self.orders.latest_unresolved_for_user(user_id, exclude_order_id=exclude_order_id)
         await add("no_unresolved_live_order", not bool(unresolved), "unresolved live order blocks new live order submission", {"order": unresolved or {}})
 
         require_fresh = self.env_bool("LIVE_REQUIRE_FRESH_RECONCILIATION", True)
@@ -90,13 +90,35 @@ class LivePreSubmitSafetyServiceV2:
 
         return {"allowed": True, "checks": checks}
 
-    async def safe_check(self, user_id: str) -> dict[str, Any]:
+    async def safe_check(self, user_id: str, exclude_order_id: str | None = None) -> dict[str, Any]:
         try:
-            return await self.check(user_id)
+            return await self.check(user_id, exclude_order_id=exclude_order_id)
         except LivePreSubmitSafetyError as exc:
             return {"allowed": False, "reason": str(exc)}
+
+    HALT_SCOPES = ("user", "global")
 
     async def create_halt(self, *, user_id: str | None, scope: str, reason: str, created_by: str = "system") -> dict[str, Any]:
         record = {"scope": scope, "user_id": user_id, "reason": reason, "active": True, "created_by": created_by, "created_at": self.utc_now().isoformat()}
         await self.db.live_halts.insert_one(dict(record))  # copy: insert_one adds an ObjectId _id that breaks JSON responses
         return record
+
+    async def release_halts(self, *, user_id: str | None, scope: str, released_by: str, reason: str | None = None) -> int:
+        """Deactivate active halts of one scope, optionally only those with this exact reason.
+
+        Returns how many were released.
+        """
+        if scope not in self.HALT_SCOPES:
+            raise ValueError(f"halt scope must be one of {self.HALT_SCOPES}")
+        query: dict[str, Any] = {"scope": scope, "active": True}
+        if scope == "user":
+            if not user_id:
+                raise ValueError("user_id is required to release a user halt")
+            query["user_id"] = user_id
+        if reason is not None:
+            query["reason"] = reason
+        result = await self.db.live_halts.update_many(
+            query,
+            {"$set": {"active": False, "released_at": self.utc_now().isoformat(), "released_by": released_by}},
+        )
+        return int(getattr(result, "modified_count", 0) or 0)

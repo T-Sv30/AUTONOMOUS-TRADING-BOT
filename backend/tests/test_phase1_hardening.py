@@ -52,59 +52,26 @@ def test_runtime_config_rejects_wildcard_cors_outside_debug():
     assert "Wildcard CORS" in result.stderr
 
 
-def test_sitecustomize_forces_explicit_cors_options():
-    result = run_backend_python(
-        """
-from fastapi import FastAPI
-from starlette.middleware.cors import CORSMiddleware
+def test_create_app_cors_middleware_uses_validated_settings():
+    from starlette.middleware.cors import CORSMiddleware
 
-app = FastAPI()
-app.add_middleware(
-    CORSMiddleware,
-    allow_credentials=True,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+    from app_factory import create_app
+    from services.settings_v2 import SETTINGS
 
-cors = app.user_middleware[0]
-assert cors.kwargs["allow_origins"] == ["http://localhost:3000"]
-assert cors.kwargs["allow_methods"] == ["GET", "POST", "OPTIONS"]
-assert cors.kwargs["allow_headers"] == ["Authorization", "Content-Type"]
-""",
-        {
-            "DEBUG": "False",
-            "JWT_SECRET": "phase1-hardening-test-secret-with-more-than-32-chars",
-            "CORS_ORIGINS": "http://localhost:3000",
-        },
-    )
+    cors = [middleware for middleware in create_app().user_middleware if middleware.cls is CORSMiddleware]
 
-    assert result.returncode == 0, result.stderr
+    assert len(cors) == 1
+    assert cors[0].kwargs["allow_origins"] == SETTINGS.cors_origins
+    assert cors[0].kwargs["allow_methods"] == ["GET", "POST", "OPTIONS"]
+    assert "Authorization" in cors[0].kwargs["allow_headers"]
 
 
-def test_sitecustomize_requires_auth_for_market_endpoints():
-    result = run_backend_python(
-        """
-from fastapi import APIRouter, FastAPI
-from fastapi.testclient import TestClient
+async def test_market_data_route_requires_a_token():
+    import httpx
 
-app = FastAPI()
-router = APIRouter()
+    from app_factory import create_app
 
-@router.get("/api/market-data/BTC-USD")
-async def market_data():
-    return {"ok": True}
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app()), base_url="http://testserver") as client:
+        response = await client.get("/api/market-data/BTC-USD")
 
-app.include_router(router)
-client = TestClient(app)
-response = client.get("/api/market-data/BTC-USD")
-assert response.status_code == 401
-""",
-        {
-            "DEBUG": "False",
-            "JWT_SECRET": "phase1-hardening-test-secret-with-more-than-32-chars",
-            "CORS_ORIGINS": "http://localhost:3000",
-        },
-    )
-
-    assert result.returncode == 0, result.stderr
+    assert response.status_code == 401, response.text

@@ -33,7 +33,11 @@ manager_task = None
 
 async def ensure_mongo_indexes() -> dict:
     index_result = await MongoIndexServiceV2(db).ensure_indexes()
-    log_event(logger, logging.INFO, "mongo_indexes_ready", result=index_result)
+    if index_result.get("errors"):
+        # A failed index (e.g. a unique index over existing duplicates) must not stop startup; ops cleans up and reruns.
+        log_event(logger, logging.WARNING, "mongo_indexes_degraded", result=index_result)
+    else:
+        log_event(logger, logging.INFO, "mongo_indexes_ready", result=index_result)
     return index_result
 
 
