@@ -54,6 +54,8 @@ class SettingsV2(BaseModel):
     api_embed_bot_manager: bool = False
 
     jwt_secret: str = ""
+    # Access token lifetime. Short by default; revocation is per user through token_version.
+    jwt_expire_hours: int = Field(default=12, ge=1, le=168)
     cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:3000"])
     mongo_url: str = "mongodb://localhost:27017"
     db_name: str = "trading_bot"
@@ -98,6 +100,7 @@ class SettingsV2(BaseModel):
             run_mongo_index_bootstrap=cls.env_bool("RUN_MONGO_INDEX_BOOTSTRAP", debug),
             api_embed_bot_manager=cls.env_bool("API_EMBED_BOT_MANAGER", debug or runtime_role == RuntimeRole.ALL),
             jwt_secret=os.getenv("JWT_SECRET") or ("local-debug-placeholder" if debug else ""),
+            jwt_expire_hours=os.getenv("JWT_EXPIRE_HOURS") or 12,
             cors_origins=cls.parse_csv(os.getenv("CORS_ORIGINS", "http://localhost:3000")),
             mongo_url=os.getenv("MONGO_URL", "mongodb://localhost:27017"),
             db_name=os.getenv("DB_NAME", "trading_bot"),

@@ -5,7 +5,7 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app_state import db
-from auth_core import verify_token
+from auth_core import token_version_matches, verify_token
 from services.api_errors_v2 import error_envelope
 from services.authorization_v2 import Scope, effective_scopes, has_scope
 from services.live_pre_submit_safety_service_v2 import LivePreSubmitSafetyServiceV2
@@ -92,7 +92,7 @@ class ScopeEnforcementMiddlewareV2(BaseHTTPMiddleware):
         if not payload or "user_id" not in payload:
             return None
         user = await db.users.find_one({"id": payload["user_id"]}, {"_id": 0})
-        if not user:
+        if not user or not token_version_matches(payload, user):
             return None
         if not user.get("roles"):
             user["roles"] = ["user"]

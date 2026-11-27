@@ -1,10 +1,10 @@
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app_state import db, logger
-from auth_core import TokenResponse, UserCreate, UserLogin, get_current_user, login, signup
+from auth_core import TokenResponse, UserCreate, UserLogin, get_current_user, login, logout_all, signup
 from services.advanced_risk_manager import AdvancedRiskManager
 from services.market_data_service import MarketDataService
 from services.paper_execution_adapter_v2 import PaperExecutionAdapterV2
@@ -48,14 +48,24 @@ def portfolio() -> PortfolioServiceV2:
     return PortfolioServiceV2(db)
 
 
+def client_ip(request: Request) -> str:
+    # The socket peer only. X-Forwarded-For is not trusted until the proxy work in a later milestone.
+    return request.client.host if request.client else "unknown"
+
+
 @api_router.post("/auth/signup", response_model=TokenResponse)
-async def signup_route(user_data: UserCreate):
-    return await signup(user_data)
+async def signup_route(user_data: UserCreate, request: Request):
+    return await signup(user_data, client_ip(request))
 
 
 @api_router.post("/auth/login", response_model=TokenResponse)
-async def login_route(credentials: UserLogin):
-    return await login(credentials)
+async def login_route(credentials: UserLogin, request: Request):
+    return await login(credentials, client_ip(request))
+
+
+@api_router.post("/auth/logout-all")
+async def logout_all_route(current_user: dict = Depends(get_current_user)):
+    return await logout_all(current_user)
 
 
 @api_router.get("/trades")
