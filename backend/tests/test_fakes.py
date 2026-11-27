@@ -114,6 +114,21 @@ async def test_create_index_is_recorded_and_unique_index_is_enforced():
 
 
 @pytest.mark.asyncio
+async def test_partial_unique_index_only_checks_matching_documents():
+    db = FakeDB()
+    await db.trades.create_index([("key", 1)], unique=True, partialFilterExpression={"claim": True}, name="uniq_claim")
+    await db.trades.insert_one({"key": "k", "claim": False})
+    await db.trades.insert_one({"key": "k", "claim": True})
+    await db.trades.insert_one({"key": "k"})
+    with pytest.raises(DuplicateKeyError):
+        await db.trades.insert_one({"key": "k", "claim": True})
+    await db.trades.update_one({"key": "k", "claim": True}, {"$set": {"claim": False}})
+    await db.trades.insert_one({"key": "k", "claim": True})
+    await db.trades.drop_index("uniq_claim")
+    assert db.trades.unique_filters == {}
+
+
+@pytest.mark.asyncio
 async def test_find_one_and_update_returns_before_or_after_and_upserts():
     db = FakeDB()
     created = await db.locks.find_one_and_update({"key": "k"}, {"$set": {"v": 1}}, upsert=True, return_document=ReturnDocument.AFTER)

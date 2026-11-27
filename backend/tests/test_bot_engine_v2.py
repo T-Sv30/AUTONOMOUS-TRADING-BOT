@@ -312,3 +312,113 @@ async def test_realized_pnl_lands_on_the_filled_sell_not_the_rejected_retry(monk
     assert [t["status"] for t in sells] == ["rejected", "filled"]
     assert "realized_pnl" not in sells[0]
     assert "realized_pnl" in sells[1]
+
+
+def claim_engine(monkeypatch, clock_at=NOON):
+    """An engine on a FakeDB that enforces the uniq_trade_idempotency_claim partial index."""
+    monkeypatch.setenv("TRADING_MODE", "paper")
+    db = FakeDB()
+    db.trades_v2.add_unique("idempotency_key", partial={"idempotency_claim": True})
+    engine = BotEngine(db, market=MarketDataService(db=db, source="simulated", clock=lambda: clock_at))
+    return db, engine
+
+
+def buy_context(at=NOON):
+    return {"action": "BUY", "selected": {"strategy": "trend"}, "notional": 50.0, "timeframe": "1m", "decision_candle_close": at.isoformat()}
+
+
+@pytest.mark.asyncio
+async def test_a_rival_claim_stops_the_order_before_the_adapter(monkeypatch):
+    """M1.5b task 15: the claim is taken before the adapter call, so a rival claim means no order is sent."""
+    db, engine = claim_engine(monkeypatch)
+    context = buy_context()
+    key = ExecutionControlV2.build_idempotency_key("u1", "BTC-USD", "BUY", context)
+    real_acquire = engine.execution_control.acquire_lock
+
+    async def acquire_after_a_rival_claims(user_id, symbol, side):
+        # Another worker claims this decision between this engine's already_executed check and its lock.
+        await db.trades_v2.insert_one({"user_id": user_id, "idempotency_key": key, "status": "pending", "idempotency_claim": True})
+        return await real_acquire(user_id, symbol, side)
+
+    monkeypatch.setattr(engine.execution_control, "acquire_lock", acquire_after_a_rival_claims)
+    adapter = engine.execution.trading_service.adapter
+    real_buy = adapter.place_market_buy
+    adapter_calls = []
+
+    async def spy(*args, **kwargs):
+        adapter_calls.append(kwargs.get("client_order_id"))
+        return await real_buy(*args, **kwargs)
+
+    monkeypatch.setattr(adapter, "place_market_buy", spy)
+    await engine.execute_buy("u1", "BTC-USD", 50.0, context)
+
+    assert adapter_calls == []
+    assert [(a["type"], a["severity"]) for a in db.alerts.docs] == [("duplicate_order_blocked", "warning")]
+    assert db.positions_v2.docs == []
+    assert db.ledger_entries.docs == []
+    assert [t["status"] for t in db.trades_v2.docs] == ["pending"]
+    assert db.execution_locks.docs == []  # the lock is released on the duplicate path
+
+
+@pytest.mark.asyncio
+async def test_a_rejected_attempt_frees_its_claim_for_a_retry_on_the_same_candle(monkeypatch):
+    """M1.5b task 15: each attempt holds a pending claim when it reaches the adapter; a rejection frees it."""
+    db, engine = claim_engine(monkeypatch)
+    context = buy_context()
+    key = ExecutionControlV2.build_idempotency_key("u1", "BTC-USD", "BUY", context)
+    adapter = engine.execution.trading_service.adapter
+    real_buy = adapter.place_market_buy
+    claims_at_call = []
+
+    async def reject_the_first(symbol, notional_usd, client_order_id=None):
+        claims_at_call.append([t["status"] for t in db.trades_v2.docs if t.get("idempotency_key") == key and t.get("idempotency_claim")])
+        order = await real_buy(symbol=symbol, notional_usd=notional_usd, client_order_id=client_order_id)
+        if len(claims_at_call) == 1:
+            return {**order, "success": False, "status": "rejected"}
+        return order
+
+    monkeypatch.setattr(adapter, "place_market_buy", reject_the_first)
+    await engine.execute_buy("u1", "BTC-USD", 50.0, context)
+    await engine.execute_buy("u1", "BTC-USD", 50.0, context)
+
+    assert claims_at_call == [["pending"], ["pending"]]
+    attempts = [(t["status"], t.get("idempotency_claim")) for t in db.trades_v2.docs if t.get("idempotency_key") == key]
+    assert attempts == [("rejected", False), ("filled", True)]
+    assert len(db.positions_v2.docs) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_new_account_opens_on_the_engine_clock(monkeypatch):
+    """M1.5b task 16: the account's first daily_start_date and starting_cash come from the engine clock, not wall time."""
+    monkeypatch.setenv("TRADING_MODE", "paper")
+    db = FakeDB()
+    db.bot_configs.docs.append({"user_id": "u1", "is_active": True, "symbols": ["BTC-USD"]})
+    scripted = datetime(2031, 3, 4, 9, 0, tzinfo=UTC)
+    engine = BotEngine(db, market=MarketDataService(db=db, source="simulated", clock=lambda: scripted))
+    opened = []
+    real_snapshot = engine.portfolio.update_risk_snapshot
+
+    async def snapshot_spy(user_id, *args, **kwargs):
+        if not opened:
+            opened.append(await db.portfolio_state.find_one({"user_id": user_id}))
+        return await real_snapshot(user_id, *args, **kwargs)
+
+    monkeypatch.setattr(engine.portfolio, "update_risk_snapshot", snapshot_spy)
+    monkeypatch.setattr(engine.planner, "build_plan", lambda symbol, prices, has_position, base_notional=100.0: {"symbol": symbol, "action": "HOLD"})
+    await engine.cycle("u1")
+
+    assert opened[0]["daily_start_date"] == "2031-03-04"
+    assert opened[0].get("starting_cash") == 10000.0
+
+
+@pytest.mark.asyncio
+async def test_halt_stamps_the_engine_clock():
+    """M1.5b task 16: halt_bot writes updated_at from the engine clock."""
+    db = FakeDB()
+    db.bot_configs.docs.append({"user_id": "u1", "is_active": True})
+    scripted = datetime(2031, 3, 4, 9, 0, tzinfo=UTC)
+    engine = BotEngine(db, market=MarketDataService(db=db, source="simulated", clock=lambda: scripted))
+    await engine.halt_bot("u1", "max drawdown")
+    config = await db.bot_configs.find_one({"user_id": "u1"})
+    assert config["is_active"] is False
+    assert config["updated_at"] == scripted.isoformat()

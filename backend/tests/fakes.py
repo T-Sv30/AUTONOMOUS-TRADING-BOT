@@ -127,16 +127,29 @@ class FakeCollection:
         self.bulk_calls: list[tuple[list[Any], bool]] = []
         self.indexes: list[tuple[Any, dict[str, Any]]] = []
         self.unique_keys: list[tuple[str, ...]] = []
+        # Partial unique keys: only documents matching the filter take part, like partialFilterExpression.
+        self.unique_filters: dict[tuple[str, ...], dict[str, Any]] = {}
 
-    def add_unique(self, fields) -> None:
-        """Register a unique key; insert_one then raises DuplicateKeyError on a clash."""
-        self.unique_keys.append((fields,) if isinstance(fields, str) else tuple(fields))
+    def add_unique(self, fields, partial: dict[str, Any] | None = None) -> None:
+        """Register a unique key; insert_one then raises DuplicateKeyError on a clash.
+
+        With ``partial``, only documents matching that filter are checked, as a Mongo partial index does.
+        """
+        key = (fields,) if isinstance(fields, str) else tuple(fields)
+        self.unique_keys.append(key)
+        if partial:
+            self.unique_filters[key] = partial
 
     def _assert_unique(self, candidate: dict[str, Any], ignore: dict[str, Any] | None = None) -> None:
         for fields in self.unique_keys:
+            partial = self.unique_filters.get(fields)
+            if partial and not matches(candidate, partial):
+                continue
             values = [get_path(candidate, field) for field in fields]
             for existing in self.docs:
                 if existing is ignore:
+                    continue
+                if partial and not matches(existing, partial):
                     continue
                 if [get_path(existing, field) for field in fields] == values:
                     raise DuplicateKeyError(f"E11000 duplicate key error: {dict(zip(fields, values, strict=True))}")
@@ -145,7 +158,7 @@ class FakeCollection:
         self.indexes.append((keys, dict(kwargs)))
         if kwargs.get("unique"):
             fields = [keys] if isinstance(keys, str) else [key for key, _ in keys]
-            self.add_unique(fields)
+            self.add_unique(fields, partial=kwargs.get("partialFilterExpression"))
         return kwargs.get("name") or "_".join(str(part) for part in ([keys] if isinstance(keys, str) else [k for k, _ in keys]))
 
     async def drop_index(self, name: str):
@@ -156,6 +169,7 @@ class FakeCollection:
                     fields = (keys,) if isinstance(keys, str) else tuple(key for key, _ in keys)
                     if fields in self.unique_keys:
                         self.unique_keys.remove(fields)
+                        self.unique_filters.pop(fields, None)
                 return
         # Mongo answers a drop of a missing index with IndexNotFound (code 27).
         raise OperationFailure(f"index not found with name [{name}]", code=27)
