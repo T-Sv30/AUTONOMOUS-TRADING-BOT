@@ -1,4 +1,5 @@
 import pytest
+from pymongo.errors import OperationFailure
 
 from services.mongo_indexes_v2 import MongoIndexServiceV2
 from services.operational_readiness_v2 import OperationalReadinessServiceV2
@@ -13,6 +14,9 @@ class FakeCollection:
         name = kwargs.get("name") or str(keys)
         self.indexes.append({"keys": keys, "kwargs": kwargs, "name": name})
         return name
+
+    async def drop_index(self, name):
+        raise OperationFailure(f"index not found with name [{name}]", code=27)
 
 
 class FakeDB:

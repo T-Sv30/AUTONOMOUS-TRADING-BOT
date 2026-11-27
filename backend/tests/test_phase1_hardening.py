@@ -108,3 +108,28 @@ assert response.status_code == 401
     )
 
     assert result.returncode == 0, result.stderr
+
+
+def test_create_app_cors_middleware_uses_validated_settings():
+    from starlette.middleware.cors import CORSMiddleware
+
+    from app_factory import create_app
+    from services.settings_v2 import SETTINGS
+
+    cors = [middleware for middleware in create_app().user_middleware if middleware.cls is CORSMiddleware]
+
+    assert len(cors) == 1
+    assert cors[0].kwargs["allow_origins"] == SETTINGS.cors_origins
+    assert cors[0].kwargs["allow_methods"] == ["GET", "POST", "OPTIONS"]
+    assert "Authorization" in cors[0].kwargs["allow_headers"]
+
+
+async def test_market_data_route_requires_a_token():
+    import httpx
+
+    from app_factory import create_app
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app()), base_url="http://testserver") as client:
+        response = await client.get("/api/market-data/BTC-USD")
+
+    assert response.status_code == 401, response.text

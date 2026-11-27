@@ -5,32 +5,12 @@ os.environ.setdefault("JWT_SECRET", "test-secret-for-security-tests")
 os.environ.setdefault("CORS_ORIGINS", "http://localhost:3000")
 
 import pytest
+from fakes import FakeDB
 from fastapi import HTTPException
 
 import auth_core
 from runtime_config import validate_cors_origins, validate_jwt_secret
 from services.live_trading_gate_v2 import LiveTradingGateV2
-
-
-class FakeAuthFailuresCollection:
-    def __init__(self):
-        self.docs = []
-
-    async def count_documents(self, query):
-        email = query.get("email")
-        return len([doc for doc in self.docs if doc.get("email") == email])
-
-    async def insert_one(self, doc):
-        self.docs.append(dict(doc))
-
-    async def delete_many(self, query):
-        email = query.get("email")
-        self.docs = [doc for doc in self.docs if doc.get("email") != email]
-
-
-class FakeDB:
-    def __init__(self):
-        self.auth_failures = FakeAuthFailuresCollection()
 
 
 @pytest.mark.parametrize("secret", ["short", "secret", "local-debug-placeholder"])
@@ -71,12 +51,14 @@ async def test_auth_throttle_blocks_after_failure_limit(monkeypatch):
     email = "user@example.com"
 
     for _ in range(auth_core.AUTH_FAILURE_LIMIT):
-        await auth_core.record_auth_failure(email)
+        await auth_core.record_auth_failure(email, "10.0.0.1")
 
     with pytest.raises(HTTPException) as exc:
-        await auth_core.enforce_auth_throttle(email)
+        await auth_core.enforce_auth_throttle(email, "10.0.0.1")
 
     assert exc.value.status_code == 429
+    # Another IP with no failures of its own is not locked out.
+    await auth_core.enforce_auth_throttle(email, "10.0.0.2")
 
 
 @pytest.mark.asyncio
@@ -85,8 +67,8 @@ async def test_auth_throttle_clears_failures(monkeypatch):
     monkeypatch.setattr(auth_core, "db", fake_db)
     email = "user@example.com"
 
-    await auth_core.record_auth_failure(email)
-    assert await auth_core.recent_auth_failures(email) == 1
+    await auth_core.record_auth_failure(email, "10.0.0.1")
+    assert await auth_core.recent_auth_failures(email, "10.0.0.1") == 1
 
-    await auth_core.clear_auth_failures(email)
-    assert await auth_core.recent_auth_failures(email) == 0
+    await auth_core.clear_auth_failures(email, "10.0.0.1")
+    assert await auth_core.recent_auth_failures(email, "10.0.0.1") == 0

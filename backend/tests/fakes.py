@@ -10,7 +10,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from pymongo import UpdateOne
-from pymongo.errors import DuplicateKeyError
+from pymongo.errors import DuplicateKeyError, OperationFailure
 
 _MISSING = object()
 
@@ -108,6 +108,10 @@ class FakeCursor:
         self.docs = sort_docs(self.docs, key, direction)
         return self
 
+    def skip(self, count: int):
+        self.docs = self.docs[count:]
+        return self
+
     def limit(self, limit: int):
         if limit:
             self.docs = self.docs[:limit]
@@ -143,6 +147,18 @@ class FakeCollection:
             fields = [keys] if isinstance(keys, str) else [key for key, _ in keys]
             self.add_unique(fields)
         return kwargs.get("name") or "_".join(str(part) for part in ([keys] if isinstance(keys, str) else [k for k, _ in keys]))
+
+    async def drop_index(self, name: str):
+        for index, (keys, kwargs) in enumerate(self.indexes):
+            if kwargs.get("name") == name:
+                del self.indexes[index]
+                if kwargs.get("unique"):
+                    fields = (keys,) if isinstance(keys, str) else tuple(key for key, _ in keys)
+                    if fields in self.unique_keys:
+                        self.unique_keys.remove(fields)
+                return
+        # Mongo answers a drop of a missing index with IndexNotFound (code 27).
+        raise OperationFailure(f"index not found with name [{name}]", code=27)
 
     async def insert_one(self, doc: dict[str, Any]):
         stored = dict(doc)

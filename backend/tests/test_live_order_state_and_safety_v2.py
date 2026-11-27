@@ -1,3 +1,4 @@
+import asyncio
 import os
 import uuid
 from datetime import UTC, datetime
@@ -21,10 +22,12 @@ import api_routes_v3
 from app_factory import create_app
 from app_state import db
 from services.live_approval_challenge_service_v2 import LiveApprovalChallengeServiceV2
+from services.live_order_audit_service_v2 import LiveOrderAuditServiceV2
 from services.live_order_state_service_v2 import LiveOrderState, LiveOrderStateError, LiveOrderStateServiceV2
 from services.live_pre_submit_safety_service_v2 import LivePreSubmitSafetyError, LivePreSubmitSafetyServiceV2
 from services.live_trading_gate_v2 import LiveTradingGateConfig, LiveTradingGateV2
 from services.live_trading_service_v2 import LiveTradingServiceV2
+from services.mongo_indexes_v2 import MongoIndexServiceV2
 
 
 async def cleanup(user_id: str):
@@ -276,3 +279,65 @@ async def test_check_without_exclusion_blocks_any_unresolved_order():
 
     with pytest.raises(LivePreSubmitSafetyError, match="unresolved live order"):
         await LivePreSubmitSafetyServiceV2(fake_db).check(SELF_USER)
+
+
+# M1.5b task 11 (P0-19): the audit chain cannot fork, and verification covers the whole chain.
+
+@pytest.mark.asyncio
+async def test_concurrent_audit_appends_build_one_linear_chain():
+    await MongoIndexServiceV2(db).ensure_indexes()
+    user_id = f"audit-race-{uuid.uuid4().hex}"
+    audits = LiveOrderAuditServiceV2(db)
+    try:
+        await asyncio.gather(*(audits.append({"user_id": user_id, "status": "dry_run", "n": n}) for n in range(20)))
+
+        records = await db.live_order_audits.find({"user_id": user_id}, {"_id": 0}).to_list(100)
+        assert len(records) == 20
+        assert len({record["previous_hash"] for record in records}) == 20, "two records share a parent: the chain forked"
+        report = await audits.verify_user_chain(user_id)
+        assert report["status"] == "ok", report["issues"][:5]
+        assert report["checked_records"] == 20
+        assert sorted(record.get("sequence") or 0 for record in records) == list(range(1, 21))
+    finally:
+        await db.live_order_audits.delete_many({"user_id": user_id})
+
+
+@pytest.mark.asyncio
+async def test_chain_verification_checks_every_record_and_finds_late_tampering():
+    fake_db = FakeDB()
+    audits = LiveOrderAuditServiceV2(fake_db)
+    for n in range(1200):
+        await audits.append({"user_id": "user-long", "status": "dry_run", "n": n})
+    assert (await audits.verify_user_chain("user-long"))["status"] == "ok"
+
+    tampered = next(doc for doc in fake_db.live_order_audits.docs if doc["n"] == 1100)
+    tampered["status"] = "filled"
+    report = await audits.verify_user_chain("user-long")
+
+    assert report["checked_records"] == 1200
+    assert report["status"] == "tamper_detected"
+    assert {"index": 1100, "type": "payload_hash_mismatch"} in report["issues"]
+
+
+@pytest.mark.asyncio
+async def test_ops_audit_chain_verify_route_checks_the_callers_chain():
+    email = f"audit-route-{uuid.uuid4().hex}@example.com"
+    user_id = None
+    try:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app()), base_url="http://testserver") as client:
+            user_id, headers = await signup(client, email)
+            await LiveOrderAuditServiceV2(db).append({"user_id": user_id, "status": "dry_run"})
+
+            unauthenticated = await client.get("/api/ops/audit-chain/verify")
+            response = await client.get("/api/ops/audit-chain/verify", headers=headers)
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["user_id"] == user_id
+        assert body["status"] == "ok"
+        assert body["checked_records"] == 1
+        assert unauthenticated.status_code == 401
+    finally:
+        if user_id:
+            await db.live_order_audits.delete_many({"user_id": user_id})
+        await cleanup_route_user(user_id, email)

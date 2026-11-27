@@ -106,6 +106,19 @@ async def test_expired_approval_challenge_is_rejected():
         await cleanup(user_id=user_id)
 
 
+@pytest.mark.asyncio
+async def test_challenge_stores_a_datetime_expiry_for_the_ttl_index():
+    # M1.5b task 7 (P0-10): Mongo TTL indexes only expire BSON dates, never ISO strings.
+    fake_db = FakeDB()
+    challenge = await LiveApprovalChallengeServiceV2(fake_db).create_challenge(user_id="user-ttl", side="BUY", symbol="BTC-USD", notional_usd=5.0)
+
+    stored = fake_db.live_approval_challenges.docs[0]
+    assert isinstance(stored.get("expires_at_ts"), datetime)
+    assert stored["expires_at_ts"].tzinfo is not None
+    assert stored["expires_at_ts"] == datetime.fromisoformat(challenge["expires_at"])
+    assert stored["expires_at"] == challenge["expires_at"]  # existing readers keep the ISO field
+
+
 async def signup_with_execute_scope(client: httpx.AsyncClient, email: str):
     response = await client.post("/api/auth/signup", json={"email": email, "password": "LiveApprovalTest123!"})
     assert response.status_code == 200, response.text

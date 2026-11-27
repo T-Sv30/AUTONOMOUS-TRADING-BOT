@@ -1,7 +1,7 @@
 import pytest
 from fakes import FakeDB
 from pymongo import ReturnDocument, UpdateOne
-from pymongo.errors import DuplicateKeyError
+from pymongo.errors import DuplicateKeyError, OperationFailure
 
 
 @pytest.mark.asyncio
@@ -148,3 +148,25 @@ async def test_delete_one_removes_a_single_match():
     result = await db.items.delete_one({"k": 1})
     assert result.deleted_count == 1
     assert len(db.items.docs) == 1
+
+
+@pytest.mark.asyncio
+async def test_drop_index_removes_the_index_and_missing_names_raise_index_not_found():
+    db = FakeDB()
+    await db.users.create_index([("email", 1)], unique=True, name="uniq_email")
+    await db.users.drop_index("uniq_email")
+    assert db.users.indexes == []
+    await db.users.insert_one({"email": "a@example.com"})
+    await db.users.insert_one({"email": "a@example.com"})  # the unique key went with the index
+    with pytest.raises(OperationFailure) as exc:
+        await db.users.drop_index("uniq_email")
+    assert exc.value.code == 27
+
+
+@pytest.mark.asyncio
+async def test_cursor_skip_pages_after_sort():
+    db = FakeDB()
+    for n in range(5):
+        await db.items.insert_one({"n": n})
+    rows = await db.items.find({}).sort("n", 1).skip(2).limit(2).to_list(None)
+    assert [row["n"] for row in rows] == [2, 3]
