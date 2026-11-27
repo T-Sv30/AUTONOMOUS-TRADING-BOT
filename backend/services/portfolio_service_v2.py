@@ -1,7 +1,11 @@
 from datetime import UTC, datetime
 from typing import Any
 
+from pymongo.errors import DuplicateKeyError
+
 from services.ledger_service_v2 import LedgerServiceV2
+
+FILLED_STATUSES = ("filled", "partially_filled")
 
 
 class PortfolioServiceV2:
@@ -64,6 +68,39 @@ class PortfolioServiceV2:
             })
         return marked
 
+    async def claim_trade(
+        self,
+        user_id: str,
+        symbol: str,
+        side: str,
+        idempotency_key: str,
+        client_order_id: str | None,
+        context: dict[str, Any] | None = None,
+    ) -> bool:
+        """Claim one decision before its order is sent. False means another attempt already holds the claim.
+
+        The pending document holds the key in the uniq_trade_idempotency_claim partial index until
+        record_trade_attempt updates it: a fill keeps the claim, a rejection releases it.
+        """
+        claim = {
+            "user_id": user_id,
+            "symbol": symbol,
+            "side": side,
+            "order_type": "market",
+            "status": "pending",
+            "client_order_id": client_order_id,
+            "idempotency_key": idempotency_key,
+            "idempotency_claim": True,
+            "signal_snapshot": context or {},
+            "created_at": self.utc_now(),
+            "filled_at": None,
+        }
+        try:
+            await self.db.trades_v2.insert_one(claim)
+        except DuplicateKeyError:
+            return False
+        return True
+
     async def record_trade_attempt(
         self,
         user_id: str,
@@ -72,6 +109,7 @@ class PortfolioServiceV2:
         order: dict[str, Any],
         context: dict[str, Any] | None = None,
     ) -> None:
+        """Record the adapter's result on the pending claim for its key, or insert it when nothing was claimed."""
         now = self.utc_now()
         trade = {
             "user_id": user_id,
@@ -95,9 +133,15 @@ class PortfolioServiceV2:
             "created_at": now,
             "filled_at": now if order.get("status") in {"filled", "partially_filled"} else None,
         }
-        if trade["status"] != "rejected" and trade["idempotency_key"]:
-            # Claims the key in the uniq_trade_idempotency_claim partial index (partial indexes cannot filter on $ne).
-            trade["idempotency_claim"] = True
+        if trade["idempotency_key"]:
+            # Holds the key in the uniq_trade_idempotency_claim partial index (partial indexes cannot filter on $ne).
+            # A rejected attempt releases it, so a retry on the same candle can claim again.
+            trade["idempotency_claim"] = trade["status"] != "rejected"
+            claimed = {"user_id": user_id, "idempotency_key": trade["idempotency_key"], "status": "pending", "idempotency_claim": True}
+            update = {k: v for k, v in trade.items() if k != "created_at"}
+            result = await self.db.trades_v2.update_one(claimed, {"$set": update})
+            if result.matched_count:
+                return
         await self.db.trades_v2.insert_one(trade)
 
     async def get_trades(self, user_id: str, limit: int = 100) -> list[dict[str, Any]]:
@@ -148,7 +192,7 @@ class PortfolioServiceV2:
             metrics = await self.update_risk_snapshot(user_id)
 
         positions = await self.get_positions(user_id)
-        trades_count = await self.db.trades_v2.count_documents({"user_id": user_id})
+        trades_count = await self.db.trades_v2.count_documents({"user_id": user_id, "status": {"$in": list(FILLED_STATUSES)}})
         config = await self.db.bot_configs.find_one({"user_id": user_id}, {"_id": 0})
         return {
             "total_equity": metrics.get("total_equity", 10000.0),

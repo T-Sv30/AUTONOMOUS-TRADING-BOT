@@ -133,6 +133,21 @@ class BotEngine:
         elif plan["action"] == "SELL" and position:
             await self.execute_sell(user_id, symbol, position, plan)
 
+    async def claim_order(self, user_id, symbol, side, idempotency_key, context) -> bool:
+        """Claim the decision before the adapter is called; a rival claim means this order is never sent."""
+        client_order_id = ExecutionServiceV2.build_client_order_id(side, symbol, idempotency_key)
+        if await self.portfolio.claim_trade(user_id, symbol, side, idempotency_key, client_order_id, context):
+            return True
+        log_event(logger, logging.WARNING, "duplicate_order_skipped", user_id=user_id, symbol=symbol, side=side, idempotency_key=idempotency_key)
+        await self.alerts.emit(
+            user_id,
+            "duplicate_order_blocked",
+            "warning",
+            f"Duplicate {side.lower()} order for {symbol} blocked before it was sent",
+            {"symbol": symbol, "side": side, "idempotency_key": idempotency_key},
+        )
+        return False
+
     async def execute_buy(self, user_id, symbol, notional, context):
         try:
             self.mode.assert_can_trade()
@@ -152,12 +167,14 @@ class BotEngine:
             return
 
         try:
+            if not await self.claim_order(user_id, symbol, "BUY", idempotency_key, context):
+                return
             order = await self.execution.buy(symbol, notional, signal_snapshot=context, idempotency_key=idempotency_key)
             order["idempotency_key"] = idempotency_key
             try:
                 await self.portfolio.record_trade_attempt(user_id, symbol, "BUY", order, context)
             except DuplicateKeyError:
-                # Backstop behind the lock and already_executed: another attempt already claimed this key.
+                # Only reachable if the pending claim vanished and another attempt claimed the key meanwhile.
                 log_event(logger, logging.WARNING, "duplicate_order_skipped", user_id=user_id, symbol=symbol, side="BUY", idempotency_key=idempotency_key)
                 return
             if not order.get("success"):
@@ -190,12 +207,14 @@ class BotEngine:
             return
 
         try:
+            if not await self.claim_order(user_id, symbol, "SELL", idempotency_key, context):
+                return
             order = await self.execution.sell(symbol, position["base_units"], idempotency_key=idempotency_key)
             order["idempotency_key"] = idempotency_key
             try:
                 await self.portfolio.record_trade_attempt(user_id, symbol, "SELL", order, context)
             except DuplicateKeyError:
-                # Backstop behind the lock and already_executed: another attempt already claimed this key.
+                # Only reachable if the pending claim vanished and another attempt claimed the key meanwhile.
                 log_event(logger, logging.WARNING, "duplicate_order_skipped", user_id=user_id, symbol=symbol, side="SELL", idempotency_key=idempotency_key)
                 return
             if not order.get("success"):
@@ -204,7 +223,7 @@ class BotEngine:
                 return
 
             result = await self.portfolio.record_sell_fill(user_id, symbol, order["filled_price"], order["base_units"], order.get("fee_usd", 0.0), order=order)
-            await self.db.trades_v2.update_one({"client_order_id": order.get("client_order_id"), "status": {"$ne": "rejected"}}, {"$set": {"realized_pnl": result.get("realized_pnl", 0.0), "idempotency_key": idempotency_key}})
+            await self.db.trades_v2.update_one({"idempotency_key": idempotency_key, "idempotency_claim": True}, {"$set": {"realized_pnl": result.get("realized_pnl", 0.0)}})
             await self.db.portfolio_state.update_one({"user_id": user_id}, {"$set": {"last_trade_at": self._now().isoformat()}}, upsert=True)
             await self.portfolio.update_risk_snapshot(user_id, {symbol: float(order["filled_price"])}, now=self._now())
         finally:
