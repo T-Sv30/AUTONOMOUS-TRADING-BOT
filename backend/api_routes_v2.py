@@ -1,26 +1,47 @@
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app_state import db, logger
 from auth_core import TokenResponse, UserCreate, UserLogin, get_current_user, login, signup
 from services.advanced_risk_manager import AdvancedRiskManager
 from services.market_data_service import MarketDataService
+from services.paper_execution_adapter_v2 import PaperExecutionAdapterV2
 from services.portfolio_service_v2 import PortfolioServiceV2
 
 api_router = APIRouter(prefix="/api")
 
 
-class BotConfig(BaseModel):
+class BotConfigUpdate(BaseModel):
+    """Fields a user may change through POST /bot-config; only the fields sent are stored.
+
+    There is no is_active field: only /bot/start and /bot/stop start or stop a bot
+    (an is_active key in the body is ignored like any other unknown key).
+    """
+
     model_config = ConfigDict(extra="ignore")
-    user_id: str = ""
-    is_active: bool = False
-    capital_floor: float | None = None  # deprecated and ignored; drawdown is the only equity halt
-    max_daily_loss: float = 0.015
-    risk_target_vol: float = 0.10
-    symbols: list[str] = Field(default_factory=lambda: ["BTC-USD", "ETH-USD"])
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    capital_floor: float | None = None  # deprecated: accepted so old clients do not get 422, never stored
+    symbols: list[str] | None = None
+    max_daily_loss: float | None = Field(default=None, gt=0, le=0.10)
+    max_drawdown_pct: float | None = Field(default=None, gt=0, le=0.25)
+    max_position_notional: float | None = Field(default=None, ge=5, le=10000)
+    cooldown_seconds: int | None = Field(default=None, ge=0, le=86400)
+    risk_target_vol: float | None = None
+
+    @field_validator("symbols")
+    @classmethod
+    def validate_symbols(cls, symbols: list[str] | None) -> list[str] | None:
+        if symbols is None:
+            return symbols
+        if not symbols:
+            raise ValueError("symbols must not be empty")
+        if len(set(symbols)) != len(symbols):
+            raise ValueError("symbols must not repeat")
+        unsupported = sorted(set(symbols) - PaperExecutionAdapterV2.SUPPORTED_SYMBOLS)
+        if unsupported:
+            raise ValueError(f"unsupported symbols: {', '.join(unsupported)}")
+        return symbols
 
 
 def portfolio() -> PortfolioServiceV2:
@@ -62,12 +83,15 @@ async def get_bot_config(current_user: dict = Depends(get_current_user)):
 
 
 @api_router.post("/bot-config")
-async def update_bot_config(config_update: BotConfig, current_user: dict = Depends(get_current_user)):
-    config_dict = config_update.model_dump()
-    config_dict["user_id"] = current_user["id"]
-    config_dict["updated_at"] = datetime.now(UTC).isoformat()
-    await db.bot_configs.update_one({"user_id": current_user["id"]}, {"$set": config_dict}, upsert=True)
-    return {"status": "success", "config": config_dict}
+async def update_bot_config(config_update: BotConfigUpdate, current_user: dict = Depends(get_current_user)):
+    changes = config_update.model_dump(exclude_unset=True, exclude_none=True, exclude={"capital_floor"})
+    changes["updated_at"] = datetime.now(UTC).isoformat()
+    await db.bot_configs.update_one(
+        {"user_id": current_user["id"]},
+        {"$set": changes, "$setOnInsert": {"is_active": False}},
+        upsert=True,
+    )
+    return {"status": "success", "config": await db.bot_configs.find_one({"user_id": current_user["id"]}, {"_id": 0})}
 
 
 @api_router.get("/market-analysis")

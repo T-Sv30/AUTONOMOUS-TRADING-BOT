@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from typing import Literal
 
-from fastapi import Depends, HTTPException
+from fastapi import Depends, HTTPException, Query
 from pydantic import BaseModel, Field, StrictBool
 
 from api_routes_v2 import api_router
@@ -135,7 +135,7 @@ async def get_trading_mode(current_user: dict = Depends(get_current_user)):
 
 
 @api_router.get("/alerts")
-async def get_alerts(current_user: dict = Depends(get_current_user), limit: int = 100):
+async def get_alerts(current_user: dict = Depends(get_current_user), limit: int = Query(100, ge=1, le=500)):
     return {"alerts": await AlertService(db).list_alerts(current_user["id"], limit=limit)}
 
 
@@ -172,7 +172,7 @@ async def run_walk_forward(request: WalkForwardRequest, current_user: dict = Dep
 
 
 @api_router.get("/ledger/entries")
-async def get_ledger_entries(current_user: dict = Depends(get_current_user), limit: int = 250):
+async def get_ledger_entries(current_user: dict = Depends(get_current_user), limit: int = Query(250, ge=1, le=500)):
     return {"entries": await LedgerServiceV2(db).list_entries(current_user["id"], limit=limit)}
 
 
@@ -208,7 +208,7 @@ async def reconcile_live_readonly(request: LiveReadonlySymbolsRequest, current_u
 
 
 @api_router.get("/live-readonly/orders")
-async def get_live_readonly_orders(current_user: dict = Depends(get_current_user), status: str = "all", limit: int = 100):
+async def get_live_readonly_orders(current_user: dict = Depends(get_current_user), status: str = "all", limit: int = Query(100, ge=1, le=500)):
     try:
         return await LiveReadonlyServiceV2(db).recent_orders(current_user["id"], status=status, limit=limit)
     except CoinbaseReadonlyError as exc:
@@ -216,7 +216,7 @@ async def get_live_readonly_orders(current_user: dict = Depends(get_current_user
 
 
 @api_router.get("/live-readonly/fills")
-async def get_live_readonly_fills(current_user: dict = Depends(get_current_user), product_id: str | None = None, limit: int = 100):
+async def get_live_readonly_fills(current_user: dict = Depends(get_current_user), product_id: str | None = None, limit: int = Query(100, ge=1, le=500)):
     try:
         return await LiveReadonlyServiceV2(db).recent_fills(current_user["id"], product_id=product_id, limit=limit)
     except CoinbaseReadonlyError as exc:
@@ -234,7 +234,7 @@ async def get_manual_live_pilot_readiness(current_user: dict = Depends(get_curre
 
 
 @api_router.get("/live-trading/pilot/pending-reconciliation")
-async def get_manual_live_pilot_pending_reconciliation(current_user: dict = Depends(get_current_user), limit: int = 100):
+async def get_manual_live_pilot_pending_reconciliation(current_user: dict = Depends(get_current_user), limit: int = Query(100, ge=1, le=500)):
     return await ManualLivePilotWorkflowServiceV2(db).pending_reconciliation_requirements(current_user["id"], limit=limit)
 
 
@@ -249,7 +249,7 @@ async def build_manual_live_pilot_report(request: PilotReportRequest, current_us
 
 
 @api_router.get("/live-trading/pilot/reports")
-async def list_manual_live_pilot_reports(current_user: dict = Depends(get_current_user), limit: int = 100):
+async def list_manual_live_pilot_reports(current_user: dict = Depends(get_current_user), limit: int = Query(100, ge=1, le=500)):
     return await ManualLivePilotWorkflowServiceV2(db).list_pilot_reports(current_user["id"], limit=limit)
 
 
@@ -264,7 +264,7 @@ async def signoff_manual_live_pilot_report(request: PilotSignoffRequest, current
 
 
 @api_router.get("/live-trading/pilot/signoffs")
-async def list_manual_live_pilot_signoffs(current_user: dict = Depends(get_current_user), limit: int = 100):
+async def list_manual_live_pilot_signoffs(current_user: dict = Depends(get_current_user), limit: int = Query(100, ge=1, le=500)):
     return await ManualLivePilotReviewServiceV2(db).list_signoffs(current_user["id"], limit=limit)
 
 
@@ -300,7 +300,7 @@ async def resolve_unknown_live_order(live_order_id: str, current_user: dict = De
 
 
 @api_router.get("/live-trading/audits")
-async def get_live_order_audits(current_user: dict = Depends(get_current_user), limit: int = 100):
+async def get_live_order_audits(current_user: dict = Depends(get_current_user), limit: int = Query(100, ge=1, le=500)):
     return {"audits": await LiveTradingServiceV2(db).list_audits(current_user["id"], limit=limit)}
 
 
@@ -316,12 +316,12 @@ async def verify_audit_chain(current_user: dict = Depends(get_current_user)):
 
 
 @api_router.get("/ops/workers")
-async def get_worker_status(current_user: dict = Depends(get_current_user), limit: int = 100):
+async def get_worker_status(current_user: dict = Depends(get_current_user), limit: int = Query(100, ge=1, le=500)):
     return await WorkerHeartbeatServiceV2(db).list_workers(limit=limit)
 
 
 @api_router.post("/ops/workers/stale-alerts")
-async def emit_worker_stale_alerts(current_user: dict = Depends(require_ops_admin), limit: int = 100):
+async def emit_worker_stale_alerts(current_user: dict = Depends(require_ops_admin), limit: int = Query(100, ge=1, le=500)):
     return await WorkerHeartbeatServiceV2(db).emit_stale_worker_alerts(limit=limit)
 
 

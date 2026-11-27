@@ -1,7 +1,7 @@
 import pytest
 from pymongo.errors import DuplicateKeyError
 
-from api_routes_v2 import BotConfig
+from api_routes_v2 import BotConfigUpdate
 from services.execution_control_v2 import ExecutionControlV2
 from services.execution_service_v2 import ExecutionServiceV2
 from services.risk_guard_v2 import RiskGuardV2
@@ -125,7 +125,7 @@ def test_legacy_capital_floor_is_accepted_and_ignored():
     guard = RiskGuardV2.from_config({"capital_floor": 0.99, "max_drawdown_pct": 0.05})
     m = guard.portfolio_metrics({"cash_balance": 9800.0, "equity_high": 10000.0, "daily_start_equity": 9800.0}, [], {})
     assert guard.should_kill_switch(m)["triggered"] is False  # 2% down
-    assert BotConfig(capital_floor=0.97).capital_floor == 0.97
+    assert BotConfigUpdate(capital_floor=0.97).capital_floor == 0.97
 
 
 def test_trading_modes_are_explicit_and_gate_execution():

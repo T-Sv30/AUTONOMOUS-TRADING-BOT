@@ -1,5 +1,5 @@
 
-from fastapi import Depends, HTTPException
+from fastapi import Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from api_routes_v2 import api_router
@@ -39,7 +39,7 @@ async def create_live_approval_challenge(
 
 
 @api_router.get("/live-approvals")
-async def list_live_approval_challenges(current_user: dict = Depends(get_current_user), limit: int = 50):
+async def list_live_approval_challenges(current_user: dict = Depends(get_current_user), limit: int = Query(50, ge=1, le=500)):
     challenges = await db.live_approval_challenges.find(
         {"user_id": current_user["id"]},
         {"_id": 0, "approval_token_hash": 0, "nonce": 0},  # projection excluding the hash, not a password  # nosec B105
