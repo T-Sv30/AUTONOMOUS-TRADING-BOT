@@ -39,7 +39,7 @@ class ScopeEnforcementMiddlewareV2(BaseHTTPMiddleware):
                 return Scope.TRADING_LIVE_EXECUTE.value
             return Scope.TRADING_LIVE_PREVIEW.value
 
-        if path == "/api/ops/readiness":
+        if path in {"/api/ops/readiness", "/api/ops/audit-chain/verify"}:
             return Scope.OPS_READINESS.value
 
         if path == "/api/ops/indexes/ensure":

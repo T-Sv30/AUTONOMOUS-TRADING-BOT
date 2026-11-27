@@ -78,7 +78,17 @@ class MongoIndexServiceV2:
         await create(self.db.live_readonly_snapshots, [("snapshot_hash", 1)], unique=True, sparse=True, name="uniq_live_readonly_snapshot_hash")
         await create(self.db.live_order_audits, [("user_id", 1), ("created_at", -1)], name="live_audits_user_created")
         await create(self.db.live_order_audits, [("audit_hash", 1)], unique=True, sparse=True, name="uniq_live_audit_hash")
-        await create(self.db.live_order_audits, [("user_id", 1), ("previous_hash", 1)], name="live_audits_user_previous_hash")
+        # One child per parent and one record per sequence number: a concurrent append cannot fork the chain.
+        # The old non-unique index has the same keys, so it must go before the unique one is built.
+        await drop(self.db.live_order_audits, "live_audits_user_previous_hash")
+        await create(self.db.live_order_audits, [("user_id", 1), ("previous_hash", 1)], unique=True, name="uniq_live_audit_user_previous_hash")
+        await create(
+            self.db.live_order_audits,
+            [("user_id", 1), ("sequence", 1)],
+            unique=True,
+            partialFilterExpression={"sequence": {"$exists": True}},  # records written before sequence numbers are exempt
+            name="uniq_live_audit_user_sequence",
+        )
         await create(self.db.live_approval_challenges, [("challenge_id", 1)], unique=True, name="uniq_live_approval_challenge")
         await create(self.db.live_approval_challenges, [("user_id", 1), ("created_at", -1)], name="live_approval_user_created")
         # TTL indexes only expire BSON dates; the old ones sat on ISO strings and never fired.

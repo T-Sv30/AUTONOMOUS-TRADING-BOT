@@ -474,5 +474,5 @@ class LiveTradingServiceV2:
             {"_id": 0},
         ).sort("created_at", -1).limit(limit).to_list(limit)
 
-    async def verify_audit_chain(self, user_id: str, limit: int = 1000):
-        return await self.audits.verify_user_chain(user_id, limit=limit)
+    async def verify_audit_chain(self, user_id: str):
+        return await self.audits.verify_user_chain(user_id)

@@ -13,6 +13,7 @@ from services.backtesting_service_v2 import BacktestConfig, BacktestingServiceV2
 from services.coinbase_live_execution_adapter_v2 import CoinbaseLiveExecutionError
 from services.coinbase_readonly_adapter_v2 import CoinbaseReadonlyError
 from services.ledger_service_v2 import LedgerServiceV2
+from services.live_order_audit_service_v2 import LiveOrderAuditServiceV2
 from services.live_pre_submit_safety_service_v2 import LivePreSubmitSafetyServiceV2
 from services.live_readonly_service_v2 import LiveReadonlyServiceV2
 from services.live_trading_gate_v2 import LiveTradingGateV2
@@ -306,6 +307,12 @@ async def get_live_order_audits(current_user: dict = Depends(get_current_user), 
 @api_router.get("/ops/readiness")
 async def get_operational_readiness(current_user: dict = Depends(get_current_user), strict: bool = False):
     return await OperationalReadinessServiceV2().readiness(db, strict=strict)
+
+
+@api_router.get("/ops/audit-chain/verify")
+async def verify_audit_chain(current_user: dict = Depends(get_current_user)):
+    # Requires ops:readiness (scope middleware). Checks every record of the caller's chain.
+    return await LiveOrderAuditServiceV2(db).verify_user_chain(current_user["id"])
 
 
 @api_router.get("/ops/workers")
