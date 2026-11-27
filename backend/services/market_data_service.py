@@ -9,10 +9,13 @@ from typing import Any
 import aiohttp
 from pymongo import UpdateOne
 
+from services.env_numbers_v2 import env_number
+
 logger = logging.getLogger(__name__)
 
 MARKET_DATA_SOURCES = ("live", "simulated", "replay")
 _TRUTHY = {"1", "true", "yes", "on"}
+_simulation_mode_warned = False  # the SIMULATION_MODE deprecation warning is logged once per process
 
 
 def parse_market_data_source(value: str | None) -> str:
@@ -33,7 +36,10 @@ def resolve_market_data_source(environ=os.environ) -> str:
         return parse_market_data_source(configured)
     legacy = environ.get("SIMULATION_MODE")
     if legacy is not None and legacy.strip():
-        logger.warning("SIMULATION_MODE is deprecated; set MARKET_DATA_SOURCE=live|simulated|replay instead.")
+        global _simulation_mode_warned
+        if not _simulation_mode_warned:
+            _simulation_mode_warned = True
+            logger.warning("SIMULATION_MODE is deprecated; set MARKET_DATA_SOURCE=live|simulated|replay instead.")
         return "simulated" if legacy.strip().lower() in _TRUTHY else "live"
     return "live"
 
@@ -80,7 +86,7 @@ class MarketDataService:
         self.timeout_seconds = (
             timeout_seconds
             if timeout_seconds is not None
-            else float(os.getenv("MARKET_DATA_TIMEOUT_SECONDS", "10"))
+            else float(env_number("MARKET_DATA_TIMEOUT_SECONDS"))
         )
         self.replay_exchange = replay_exchange or os.getenv("MARKET_DATA_REPLAY_EXCHANGE") or "coinbase_exchange"
         self._session = None
@@ -205,7 +211,7 @@ class MarketDataService:
     def _simulate_price_data(self, symbol: str) -> dict[str, Any]:
         now = self.clock()
         price = self._sim_price(symbol, now)
-        half_spread = float(os.getenv("SIM_SPREAD_BPS", "2")) / 2 / 10000
+        half_spread = float(env_number("SIM_SPREAD_BPS")) / 2 / 10000
         rng = random.Random(self._seed_int(f"{self.seed}:{symbol}:ticker:{int(now.timestamp() // 60)}"))
         return {
             "symbol": symbol,

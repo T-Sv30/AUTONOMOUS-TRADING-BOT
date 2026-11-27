@@ -5,6 +5,7 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from typing import Any
 
+from services.env_numbers_v2 import env_number
 from services.market_data_service import MarketDataService, MarketDataUnavailable
 
 logger = logging.getLogger(__name__)
@@ -69,8 +70,8 @@ class PaperExecutionAdapterV2:
 
         return PaperExecutionConfig(
             fee_bps=env_float("PAPER_FEE_BPS", 10.0),
-            extra_slippage_bps=env_float("PAPER_EXTRA_SLIPPAGE_BPS", 0.0),
-            fallback_spread_bps=env_float("PAPER_FALLBACK_SPREAD_BPS", 2.0),
+            extra_slippage_bps=float(env_number("PAPER_EXTRA_SLIPPAGE_BPS")),
+            fallback_spread_bps=float(env_number("PAPER_FALLBACK_SPREAD_BPS")),
             min_notional_usd=env_float("PAPER_MIN_NOTIONAL_USD", 5.0),
             partial_fill_threshold_usd=env_float("PAPER_PARTIAL_FILL_THRESHOLD_USD", 250.0),
             partial_fill_ratio=env_float("PAPER_PARTIAL_FILL_RATIO", 0.65),

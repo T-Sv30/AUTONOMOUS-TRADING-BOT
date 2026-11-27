@@ -59,7 +59,7 @@ class BotEngine:
             return
 
         risk = RiskGuardV2.from_config(config)
-        await self.portfolio.ensure_account_state(user_id)
+        await self.portfolio.ensure_account_state(user_id, now=self._now())
         symbols = config.get("symbols", ["BTC-USD"])
         price_map = await self.get_price_map(user_id, symbols)
         snapshot = await self.portfolio.update_risk_snapshot(user_id, price_map, now=self._now(), max_drawdown_pct=risk.max_drawdown_pct)
@@ -92,7 +92,7 @@ class BotEngine:
     async def halt_bot(self, user_id: str, reason: str, metrics=None):
         await self.db.bot_configs.update_one(
             {"user_id": user_id},
-            {"$set": {"is_active": False, "halt_reason": reason, "updated_at": datetime.now(UTC).isoformat()}},
+            {"$set": {"is_active": False, "halt_reason": reason, "updated_at": self._now().isoformat()}},
         )
         log_event(logger, logging.WARNING, "bot_halted", user_id=user_id, reason=reason)
         await self.alerts.emit(user_id, "bot_halted", "critical", f"Bot halted: {reason}", metrics or {})
@@ -109,7 +109,14 @@ class BotEngine:
 
     async def report_market_data_failure(self, user_id, symbol, exc):
         log_event(logger, logging.WARNING, "market_data_failed", user_id=user_id, symbol=symbol, error=str(exc))
-        await self.alerts.emit(user_id, "market_data_failed", "warning", f"Market data unavailable for {symbol}", {"symbol": symbol, "error": str(exc)})
+        await self.alerts.emit(
+            user_id,
+            "market_data_failed",
+            "warning",
+            f"Market data unavailable for {symbol}",
+            {"symbol": symbol, "error": str(exc)},
+            dedupe_seconds=300,
+        )
 
     async def process_symbol(self, user_id, symbol, positions, state, risk: RiskGuardV2, price_map):
         timeframe = "1m"

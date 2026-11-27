@@ -17,20 +17,22 @@ class PortfolioServiceV2:
     def utc_now() -> str:
         return datetime.now(UTC).isoformat()
 
-    async def ensure_account_state(self, user_id: str, starting_cash: float = 10000.0) -> dict[str, Any]:
+    async def ensure_account_state(self, user_id: str, starting_cash: float = 10000.0, now: datetime | None = None) -> dict[str, Any]:
+        """Return the account state, opening it on ``now`` (the caller's clock; wall time by default) if missing."""
         state = await self.db.portfolio_state.find_one({"user_id": user_id}, {"_id": 0})
         if state:
             return state
 
-        now = self.utc_now()
+        opened_at = (now or datetime.now(UTC)).astimezone(UTC)
         state = {
             "user_id": user_id,
+            "starting_cash": float(starting_cash),
             "cash_balance": float(starting_cash),
             "realized_pnl": 0.0,
             "equity_high": float(starting_cash),
             "daily_start_equity": float(starting_cash),
-            "daily_start_date": datetime.now(UTC).date().isoformat(),
-            "updated_at": now,
+            "daily_start_date": opened_at.date().isoformat(),
+            "updated_at": opened_at.isoformat(),
         }
         await self.db.portfolio_state.insert_one(dict(state))  # copy: insert_one adds an ObjectId _id that breaks JSON responses
         return state
@@ -148,7 +150,7 @@ class PortfolioServiceV2:
         return await self.db.trades_v2.find({"user_id": user_id}, {"_id": 0}).sort("created_at", -1).limit(limit).to_list(limit)
 
     async def update_risk_snapshot(self, user_id: str, price_map: dict[str, float] | None = None, now: datetime | None = None, max_drawdown_pct: float = 0.05) -> dict[str, Any]:
-        state = await self.ensure_account_state(user_id)
+        state = await self.ensure_account_state(user_id, now=now)
         positions = await self.mark_positions(user_id, price_map)
 
         cash_balance = float(state.get("cash_balance", 0.0))
