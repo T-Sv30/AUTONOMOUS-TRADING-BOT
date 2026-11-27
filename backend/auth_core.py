@@ -66,7 +66,9 @@ async def recent_auth_failures(email: str) -> int:
 
 
 async def record_auth_failure(email: str) -> None:
-    await db.auth_failures.insert_one({"email": email, "created_at": datetime.now(UTC).isoformat()})
+    now = datetime.now(UTC)
+    # created_at_ts is a BSON date for the TTL index; created_at stays for existing readers.
+    await db.auth_failures.insert_one({"email": email, "created_at": now.isoformat(), "created_at_ts": now})
 
 
 async def clear_auth_failures(email: str) -> None:
